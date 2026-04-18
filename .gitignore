@@ -1,0 +1,65 @@
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDEs
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.sln.docstates
+
+# Unreal Engine
+Intermediate/
+Saved/
+DerivedDataCache/
+Build/
+Binaries/
+*.sdf
+*.opensdf
+*.opendb
+*.VC.db
+
+# Unity
+Library/
+Temp/
+Obj/
+Logs/
+UserSettings/
+MemoryCaptures/
+*.csproj
+*.unityproj
+*.pidb
+*.pdb
+*.mdb
+
+# Build outputs
+[Bb]uild/
+[Dd]ist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+package-lock.json
+
+# Large binary assets (track with Git LFS instead)
+# *.fbx
+# *.uasset
+# *.umap
+
+# Temporary
+*.tmp
+*.bak
+*.swp
+*~
