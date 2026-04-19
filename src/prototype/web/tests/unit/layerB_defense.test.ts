@@ -118,6 +118,89 @@ describe("Defender discrete intents (§B.6)", () => {
   });
 });
 
+describe("BaseZone full coverage (all six zones selectable)", () => {
+  const cases: ReadonlyArray<{ rs: { x: number; y: number }; expected: BaseZone }> = [
+    { rs: { x:  0,              y:  1 },              expected: "CHEST" },
+    { rs: { x:  0,              y: -1 },              expected: "HIP" },
+    { rs: { x: -0.7071,         y: -0.7071 },         expected: "KNEE_L" },
+    { rs: { x:  0.7071,         y: -0.7071 },         expected: "KNEE_R" },
+    { rs: { x: -0.7071,         y:  0.7071 },         expected: "BICEP_L" },
+    { rs: { x:  0.7071,         y:  0.7071 },         expected: "BICEP_R" },
+  ];
+
+  for (const c of cases) {
+    it(`RS ≈ ${JSON.stringify(c.rs)} + trigger → ${c.expected}`, () => {
+      const { nextZone } = computeTopBaseIntent(
+        frame({ rs: c.rs, l_trigger: 0.5 }),
+        null,
+      );
+      expect(nextZone).toBe(c.expected);
+    });
+  }
+});
+
+describe("BaseZone hysteresis (§B.4.2 delegates to attacker §B.2.1)", () => {
+  it("small nudge from CHEST toward BICEP_L does NOT flip the zone", () => {
+    // CHEST is straight up (0,1). Nudge RS only slightly toward the
+    // BICEP_L wedge — hysteresis should keep us on CHEST.
+    const { nextZone } = computeTopBaseIntent(
+      frame({ rs: { x: -0.25, y: 0.97 }, l_trigger: 0.5 }), // ≈ 15° off pure-up
+      "CHEST",
+    );
+    expect(nextZone).toBe("CHEST" satisfies BaseZone);
+  });
+
+  it("firm move into BICEP_L wedge flips the zone", () => {
+    const { nextZone } = computeTopBaseIntent(
+      frame({ rs: { x: -0.7, y: 0.7 }, l_trigger: 0.5 }),
+      "CHEST",
+    );
+    expect(nextZone).toBe("BICEP_L" satisfies BaseZone);
+  });
+
+  it("with no previous zone, any aimed RS immediately selects", () => {
+    // No hysteresis floor when lastZone is null — first press commits.
+    const { nextZone } = computeTopBaseIntent(
+      frame({ rs: { x: -0.25, y: 0.97 }, l_trigger: 0.5 }),
+      null,
+    );
+    // Nearest wedge to (−0.25, 0.97) is CHEST (dot 0.97) over BICEP_L (dot ≈0.86).
+    expect(nextZone).toBe("CHEST" satisfies BaseZone);
+  });
+
+  it("trigger still held but RS centred → zone persists", () => {
+    const { base, nextZone } = computeTopBaseIntent(
+      frame({ rs: { x: 0, y: 0 }, l_trigger: 0.7 }),
+      "HIP",
+    );
+    // Per current code, trigger-held + RS centred keeps the zone AND
+    // keeps the hand target attached.
+    expect(nextZone).toBe("HIP" satisfies BaseZone);
+    expect(base.l_hand_target).toBe("HIP");
+  });
+
+  it("trigger released with RS centred → zone cleared", () => {
+    const { nextZone } = computeTopBaseIntent(
+      frame({ rs: { x: 0, y: 0 } }),
+      "KNEE_R",
+    );
+    expect(nextZone).toBe(null);
+  });
+
+  it("bumper edge preserves previous zone (no flip while RS is repurposed)", () => {
+    const { nextZone } = computeTopBaseIntent(
+      frame({
+        button_edges: ButtonBit.R_BUMPER,
+        buttons: ButtonBit.R_BUMPER,
+        rs: { x: -0.9, y: 0.4 }, // would otherwise pick BICEP_L
+        r_trigger: 0.4,
+      }),
+      "KNEE_R",
+    );
+    expect(nextZone).toBe("KNEE_R");
+  });
+});
+
 describe("transformLayerBDefense threading", () => {
   it("returns ZERO base when no trigger is held", () => {
     const { intent } = transformLayerBDefense(

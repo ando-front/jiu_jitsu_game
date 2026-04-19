@@ -182,6 +182,16 @@ function frame(now: number) {
       case "GUARD_OPENED":
         scene3d.pulseFlash(0xff7070, 360);
         break;
+      case "PASS_STARTED":
+        scene3d.pulseFlash(0x9ec9ff, 140);
+        break;
+      case "PASS_SUCCEEDED":
+        scene3d.pulseFlash(0x9ec9ff, 480);
+        scene3d.pulseShake("bottom", 0.2, 500);
+        break;
+      case "PASS_FAILED":
+        scene3d.pulseFlash(0xffb080, 260);
+        break;
     }
   }
 
@@ -295,6 +305,9 @@ function renderHud(f: InputFrame, intent: Intent, g: GameState, stepsThisRaf: nu
   lines.push(`candidates ${g.judgmentWindow.candidates.join(" ") || "·"}`);
   lines.push(`counterWindow  ${g.counterWindow.state}  sweepSign=${g.attackerSweepLateralSign}`);
   lines.push(`counter-cands  ${g.counterWindow.candidates.join(" ") || "·"}`);
+  lines.push(`top.stamina    ${fmt(g.top.stamina)}`);
+  lines.push(`passAttempt    ${g.passAttempt.kind}${g.passAttempt.kind === "IN_PROGRESS" ? ` (t=${(g.nowMs - g.passAttempt.startedMs).toFixed(0)}ms)` : ""}`);
+  lines.push(`sessionEnded   ${g.sessionEnded}`);
   return lines.join("\n");
 }
 

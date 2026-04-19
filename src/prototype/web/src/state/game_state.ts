@@ -46,6 +46,7 @@ import {
   applyConfirmCost,
   gripStrengthCeiling,
   updateStamina,
+  updateStaminaDefender,
 } from "./stamina.js";
 import {
   INITIAL_ARM_EXTRACTED,
@@ -65,6 +66,13 @@ import {
   type CounterTickEvent,
   type CounterWindow,
 } from "./counter_window.js";
+import {
+  INITIAL_PASS_ATTEMPT,
+  isPassEligible,
+  tickPassAttempt,
+  type PassAttemptState,
+  type PassTickEvent,
+} from "./pass_attempt.js";
 import type { DefenseIntent } from "../input/intent_defense.js";
 
 export type Vec2 = Readonly<{ x: number; y: number }>;
@@ -123,6 +131,8 @@ export type GameState = Readonly<{
   guard: GuardState;
   judgmentWindow: JudgmentWindow;
   counterWindow: CounterWindow;
+  passAttempt: PassAttemptState;
+  sessionEnded: boolean;
   // §D.2 — sign snapshot of the attacker's lateral hip input captured at
   // attacker-window OPENING. Used by Layer D_defense to resolve
   // SCISSOR_COUNTER (which needs "opposite direction").
@@ -142,6 +152,8 @@ export function initialGameState(nowMs: number = 0): GameState {
     guard: "CLOSED" as const,
     judgmentWindow: INITIAL_JUDGMENT_WINDOW,
     counterWindow: INITIAL_COUNTER_WINDOW,
+    passAttempt: INITIAL_PASS_ATTEMPT,
+    sessionEnded: false,
     attackerSweepLateralSign: 0,
     time: INITIAL_TIME_CONTEXT,
     sustained: INITIAL_SUSTAINED,
@@ -157,7 +169,9 @@ export type SimEvent =
   | FootTickEvent
   | JudgmentTickEvent
   | CounterTickEvent
-  | { kind: "GUARD_OPENED" };
+  | PassTickEvent
+  | { kind: "GUARD_OPENED" }
+  | { kind: "SESSION_ENDED"; reason: "PASS_SUCCESS" | "TECHNIQUE_FINISHED" | "GUARD_OPENED" };
 
 export type StepOptions = Readonly<{
   realDtMs: number;
@@ -229,7 +243,10 @@ export function stepSimulation(
     armExtractedRight: nextArmExtracted.right,
   });
 
-  // 4. stamina (bottom only in Stage 1).
+  // 4. stamina — bottom driven by attacker input, top driven (if defender
+  // intent is provided) by base pressure + weight. Without defense intent
+  // the top stamina sits on a no-op tick (no drain, no recovery), which
+  // is the correct "passive opponent" behaviour for Stage 1.
   const breathPressed = (frame.buttons & ButtonBit.BTN_BREATH) !== 0;
   const nextBottomStamina = updateStamina(prev.bottom.stamina, {
     dtMs: opts.gameDtMs,
@@ -239,6 +256,17 @@ export function stepSimulation(
     triggerR: effectiveTriggerR,
     breathPressed,
   });
+  const nextTopStamina = defense !== null
+    ? updateStaminaDefender(prev.top.stamina, {
+        dtMs: opts.gameDtMs,
+        actor: nextTop,
+        leftBasePressure: defense.base.l_base_pressure,
+        rightBasePressure: defense.base.r_base_pressure,
+        weightForward: defense.hip.weight_forward,
+        weightLateral: defense.hip.weight_lateral,
+        breathPressed: defense.discrete.some((d) => d.kind === "BREATH_START"),
+      })
+    : prev.top.stamina;
 
   // 5. Sustained counters (hip_bump's 300ms rolling push).
   const pushActive = intent.hip.hip_push >= 0.5;
@@ -347,11 +375,20 @@ export function stepSimulation(
     ? Object.freeze({ ...nextBottom, stamina: applyConfirmCost(nextBottom.stamina) })
     : nextBottom;
 
-  // Rebuild top with possibly-cleared arm_extracted after counter.
+  // Rebuild top with possibly-cleared arm_extracted after counter + new
+  // stamina. Counter confirmation also costs defender stamina, symmetric
+  // with attacker's technique confirm.
+  const counterConfirmedThisTick = counterResult.events.some(
+    (e) => e.kind === "COUNTER_CONFIRMED",
+  );
+  const topStaminaFinal = counterConfirmedThisTick
+    ? applyConfirmCost(nextTopStamina)
+    : nextTopStamina;
   const topAfterCounter: ActorState = Object.freeze({
     ...nextTop,
     armExtractedLeft: armExtractedAfterCounter.left,
     armExtractedRight: armExtractedAfterCounter.right,
+    stamina: topStaminaFinal,
   });
 
   // Time scale: if either window is producing slow-mo, pick the most
@@ -371,12 +408,60 @@ export function stepSimulation(
     defenderCutInProgress: false,
   });
 
+  // 9. Pass attempt (§B.7). Commit eligibility depends on the FRESH actor
+  // states we just computed. A commit-requested-but-ineligible intent
+  // fires nothing (per §B.7.1 "演出のみ") — the PassTickEvent stream
+  // stays silent unless the pass actually starts.
+  const passCommitRequested = defense !== null
+    && defense.discrete.some((d) => d.kind === "PASS_COMMIT");
+  const passEligibleNow = defense !== null
+    ? isPassEligible({
+        bottom: bottomAfterConfirm,
+        top: topAfterCounter,
+        defenderStamina: topAfterCounter.stamina,
+        leftBasePressure: defense.base.l_base_pressure,
+        rightBasePressure: defense.base.r_base_pressure,
+        leftBaseZone: defense.base.l_hand_target,
+        rightBaseZone: defense.base.r_hand_target,
+        rsY: frame.rs.y,
+        guard: nextGuard,
+      })
+    : false;
+  const triangleConfirmedThisTick = winResult.events.some(
+    (e) => e.kind === "TECHNIQUE_CONFIRMED" && "technique" in e && e.technique === "TRIANGLE",
+  );
+  const passResult = tickPassAttempt(prev.passAttempt, {
+    nowMs,
+    commitRequested: passCommitRequested,
+    eligibleNow: passEligibleNow,
+    attackerTriangleConfirmedThisTick: triangleConfirmedThisTick,
+  });
+  for (const e of passResult.events) events.push(e);
+
+  // Session termination (§6 M1 scope: PASS_SUCCESS / guard open / technique
+  // confirmed all end the session on a placeholder).
+  let sessionEnded = prev.sessionEnded;
+  if (!sessionEnded) {
+    if (passResult.events.some((e) => e.kind === "PASS_SUCCEEDED")) {
+      sessionEnded = true;
+      events.push({ kind: "SESSION_ENDED", reason: "PASS_SUCCESS" });
+    } else if (confirmedThisTick) {
+      sessionEnded = true;
+      events.push({ kind: "SESSION_ENDED", reason: "TECHNIQUE_FINISHED" });
+    } else if (nextGuard === "OPEN" && prev.guard === "CLOSED") {
+      sessionEnded = true;
+      events.push({ kind: "SESSION_ENDED", reason: "GUARD_OPENED" });
+    }
+  }
+
   const nextState: GameState = Object.freeze({
     bottom: bottomAfterConfirm,
     top: topAfterCounter,
     guard: nextGuard,
     judgmentWindow: finalJudgmentWindow,
     counterWindow: counterResult.next,
+    passAttempt: passResult.next,
+    sessionEnded,
     attackerSweepLateralSign,
     time: nextTime,
     sustained: nextSustained,

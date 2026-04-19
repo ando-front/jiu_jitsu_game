@@ -120,6 +120,52 @@ export function applyConfirmCost(
   return clamp01(prev - cfg.confirmDrainFlat);
 }
 
+// Defender stamina. Defender's "active hand" is a base hand pressing at
+// ≥ 0.5 pressure; everything else maps the same way.
+export type StaminaDefenderInputs = Readonly<{
+  dtMs: number;
+  actor: ActorState;           // the top actor — read for its own posture_break
+  leftBasePressure: number;    // from DefenseIntent.base.l_base_pressure
+  rightBasePressure: number;
+  weightForward: number;       // from DefenseIntent.hip.weight_forward
+  weightLateral: number;       // from DefenseIntent.hip.weight_lateral
+  breathPressed: boolean;
+}>;
+
+export function updateStaminaDefender(
+  prev: number,
+  inputs: StaminaDefenderInputs,
+  cfg: StaminaConfig = DEFAULT_STAMINA_CONFIG,
+): number {
+  const dtSec = inputs.dtMs / 1000;
+  let ratePerSec = 0;
+
+  const leftActive = inputs.leftBasePressure >= 0.5;
+  const rightActive = inputs.rightBasePressure >= 0.5;
+  if (leftActive || rightActive) {
+    ratePerSec -= cfg.handActiveDrainPerSec;
+  }
+
+  // Defender's own posture break drains them too (being broken is tiring).
+  const breakMag = Math.hypot(inputs.actor.postureBreak.x, inputs.actor.postureBreak.y);
+  if (breakMag > 0) {
+    ratePerSec -= cfg.postureMaintainDrainPerSec * breakMag;
+  }
+
+  // Recovery — symmetric with attacker: breath + no active bases + static weight.
+  const weightMag = Math.hypot(inputs.weightForward, inputs.weightLateral);
+  const staticWeight = weightMag < cfg.hipInputStaticThreshold;
+  const anyBaseActive = inputs.leftBasePressure > 0 || inputs.rightBasePressure > 0;
+
+  if (inputs.breathPressed && !anyBaseActive && staticWeight) {
+    ratePerSec += cfg.breathRecoverPerSec;
+  } else if (!anyBaseActive && staticWeight && allLimbsIdle(inputs.actor)) {
+    ratePerSec += cfg.idleRecoverPerSec;
+  }
+
+  return clamp01(prev + ratePerSec * dtSec);
+}
+
 // §5.3 — clamp grip strength ceiling at low stamina. Returns a ceiling in
 // [0,1] that downstream should apply as `min(raw_trigger, ceiling)`.
 export function gripStrengthCeiling(
