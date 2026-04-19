@@ -1,13 +1,8 @@
 // PURE — GameState aggregate and the top-level stepSimulation tick function.
 // Reference: docs/design/architecture_overview_v1.md §7, docs/design/state_machines_v1.md §10.
 //
-// This module owns the per-frame evaluation order across sub-FSMs. It MUST
-// remain pure: no DOM, no Three.js, no console.log in production paths.
-//
-// Current Stage 1 scope (deliberately narrow): bottom actor's hands/feet
-// driven by player input, plus posture_break placeholder + minimal guard
-// FSM. Top actor, stamina, arm_extracted, judgment window, and control
-// layer are stubbed and will be filled in subsequent commits.
+// Evaluation order (§10): ActorState → GuardFSM → (ControlLayer — deferred)
+// → JudgmentWindowFSM. This module owns that order.
 
 import type { Intent } from "../input/intent.js";
 import type { InputFrame } from "../input/types.js";
@@ -26,20 +21,32 @@ import {
   type HandSide,
   type HandTickEvent,
 } from "./hand_fsm.js";
+import {
+  gripPullVector,
+  updatePostureBreak,
+} from "./posture_break.js";
+import {
+  INITIAL_JUDGMENT_WINDOW,
+  TIME_SCALE,
+  evaluateAllTechniques,
+  tickJudgmentWindow,
+  type JudgmentContext,
+  type JudgmentTickEvent,
+  type JudgmentWindow,
+  type Technique,
+} from "./judgment_window.js";
 
 export type Vec2 = Readonly<{ x: number; y: number }>;
 
 export const ZERO_VEC2: Vec2 = Object.freeze({ x: 0, y: 0 });
 
-// §1.2 — ActorState. Stage-1 partial; top actor fields remain even when
-// stubbed so the structure is symmetric (per §0.1 principle 4).
 export type ActorState = Readonly<{
   leftHand: HandFSM;
   rightHand: HandFSM;
   leftFoot: FootFSM;
   rightFoot: FootFSM;
   postureBreak: Vec2;
-  stamina: number; // [0,1]
+  stamina: number;
   armExtractedLeft: boolean;
   armExtractedRight: boolean;
 }>;
@@ -57,14 +64,41 @@ export function initialActorState(nowMs: number): ActorState {
   });
 }
 
-// §6 — GuardFSM is tiny in Stage 1: CLOSED → OPEN is a one-way exit that
-// also ends the session. No OPEN→CLOSED recovery in M1 scope.
 export type GuardState = "CLOSED" | "OPEN";
+
+// §9 — time context exposed so downstream (camera / animation / scene)
+// can read the active scale. We track realDt and gameDt both for parity
+// with the design doc, even though Stage 1's fixed step only uses gameDt.
+export type TimeContext = Readonly<{
+  scale: number;
+  realDtMs: number;
+  gameDtMs: number;
+}>;
+
+export const INITIAL_TIME_CONTEXT: TimeContext = Object.freeze({
+  scale: 1,
+  realDtMs: 0,
+  gameDtMs: 0,
+});
+
+// Small side-effect-free accumulator for sustained-condition tracking
+// (currently: hip_bump's 300ms requirement). Living on GameState keeps
+// the whole tick deterministic.
+export type SustainedCounters = Readonly<{
+  hipPushMs: number; // total consecutive ms of bottom.hip_push >= 0.5
+}>;
+
+export const INITIAL_SUSTAINED: SustainedCounters = Object.freeze({
+  hipPushMs: 0,
+});
 
 export type GameState = Readonly<{
   bottom: ActorState;
   top: ActorState;
   guard: GuardState;
+  judgmentWindow: JudgmentWindow;
+  time: TimeContext;
+  sustained: SustainedCounters;
   frameIndex: number;
   nowMs: number;
 }>;
@@ -73,7 +107,10 @@ export function initialGameState(nowMs: number = 0): GameState {
   return Object.freeze({
     bottom: initialActorState(nowMs),
     top: initialActorState(nowMs),
-    guard: "CLOSED",
+    guard: "CLOSED" as const,
+    judgmentWindow: INITIAL_JUDGMENT_WINDOW,
+    time: INITIAL_TIME_CONTEXT,
+    sustained: INITIAL_SUSTAINED,
     frameIndex: 0,
     nowMs,
   });
@@ -82,31 +119,66 @@ export function initialGameState(nowMs: number = 0): GameState {
 export type SimEvent =
   | HandTickEvent
   | FootTickEvent
+  | JudgmentTickEvent
   | { kind: "GUARD_OPENED" };
 
-// The one entry point. Platform code (main.ts / sim loop) calls this per
-// fixed timestep with a fresh InputFrame + Intent. Returns a new GameState
-// and the events that fired this tick.
-//
-// Stage 1 non-goals: top actor is NOT driven by input here. A top-side
-// input adapter is deferred to the Layer B defense pass. Top-side state
-// still ticks (so its FSMs don't freeze), just with an empty intent.
+// Extra per-tick options that the caller (sim loop) supplies.
+// - realDtMs: wall-clock delta for time-context bookkeeping.
+// - gameDtMs: scaled delta used by posture_break and any other continuous
+//   integrator. The caller is responsible for computing gameDtMs from the
+//   previous frame's timeScale, NOT from the post-judgment scale — that's
+//   already the convention that keeps the §9 "A層 real_dt / B層以降 game_dt"
+//   rule honest.
+// - confirmedTechnique: if the player commits a technique this frame
+//   (resolved outside this module, typically via a Layer D adapter),
+//   pass it here. Stage 1 main.ts passes null.
+export type StepOptions = Readonly<{
+  realDtMs: number;
+  gameDtMs: number;
+  confirmedTechnique: Technique | null;
+}>;
+
 export function stepSimulation(
   prev: GameState,
   frame: InputFrame,
   intent: Intent,
+  opts: StepOptions = { realDtMs: 0, gameDtMs: 0, confirmedTechnique: null },
 ): { nextState: GameState; events: readonly SimEvent[] } {
   const events: SimEvent[] = [];
   const nowMs = frame.timestamp;
 
+  // 1. ActorState updates — hands / feet (via FSM ticks).
   const nextBottom = tickBottomActor(prev.bottom, prev.top, frame, intent, nowMs, events);
+  const nextTopPassive = tickTopActorPassive(prev.top, nowMs);
 
-  // Stage 1: top actor is passive. We still let its feet drift forward in
-  // time (stateEnteredMs etc.) by running a no-op tick, so the LOCKING
-  // timer on top-side would resolve correctly once we wire top input.
-  const nextTop = tickTopActorPassive(prev.top, nowMs);
+  // 2. posture_break continuous update. Attacker (bottom) drives the TOP
+  // actor's posture break; we pass defenderRecovery=zero until defender
+  // input is wired.
+  const gripPulls: Vec2[] = [];
+  if (nextBottom.leftHand.state === "GRIPPED" && nextBottom.leftHand.target !== null) {
+    gripPulls.push(gripPullVector(nextBottom.leftHand.target, frame.l_trigger));
+  }
+  if (nextBottom.rightHand.state === "GRIPPED" && nextBottom.rightHand.target !== null) {
+    gripPulls.push(gripPullVector(nextBottom.rightHand.target, frame.r_trigger));
+  }
+  const nextTopPosture = updatePostureBreak(
+    prev.top.postureBreak,
+    {
+      dtMs: opts.gameDtMs,
+      attackerHip: intent.hip,
+      gripPulls,
+      defenderRecovery: ZERO_VEC2,
+    },
+  );
+  const nextTop: ActorState = Object.freeze({ ...nextTopPassive, postureBreak: nextTopPosture });
 
-  // §6 — two-foot UNLOCKED opens the guard. One-shot transition.
+  // 3. Sustained counters. hip_bump needs 300ms of hip_push ≥ 0.5 in a row.
+  const pushActive = intent.hip.hip_push >= 0.5;
+  const nextSustained: SustainedCounters = Object.freeze({
+    hipPushMs: pushActive ? prev.sustained.hipPushMs + opts.gameDtMs : 0,
+  });
+
+  // 4. GuardFSM — one-way CLOSED → OPEN when both feet are UNLOCKED.
   let nextGuard = prev.guard;
   if (
     prev.guard === "CLOSED" &&
@@ -117,10 +189,40 @@ export function stepSimulation(
     events.push({ kind: "GUARD_OPENED" });
   }
 
+  // 5. JudgmentWindowFSM. evaluateAllTechniques consults the FRESH actor
+  // states + posture break so same-frame transitions (e.g. grip just
+  // became GRIPPED) contribute to the fire check.
+  const ctx: JudgmentContext = {
+    bottom: nextBottom,
+    top: nextTop,
+    bottomHipYaw: intent.hip.hip_angle_target,
+    bottomHipPush: intent.hip.hip_push,
+    sustainedHipPushMs: nextSustained.hipPushMs,
+  };
+  const satisfied = evaluateAllTechniques(ctx, frame.l_trigger, frame.r_trigger);
+  const dismissRequested = (frame.button_edges & ButtonBit.BTN_RELEASE) !== 0;
+  const winResult = tickJudgmentWindow(
+    prev.judgmentWindow,
+    satisfied,
+    { nowMs, confirmedTechnique: opts.confirmedTechnique, dismissRequested },
+  );
+  for (const e of winResult.events) events.push(e);
+
+  // 6. TimeContext — scale returned by the window tick is the canonical
+  // time scale for this frame.
+  const nextTime: TimeContext = Object.freeze({
+    scale: winResult.timeScale,
+    realDtMs: opts.realDtMs,
+    gameDtMs: opts.gameDtMs,
+  });
+
   const nextState: GameState = Object.freeze({
     bottom: nextBottom,
     top: nextTop,
     guard: nextGuard,
+    judgmentWindow: winResult.next,
+    time: nextTime,
+    sustained: nextSustained,
     frameIndex: prev.frameIndex + 1,
     nowMs,
   });
@@ -140,37 +242,26 @@ function tickBottomActor(
 ): ActorState {
   const forceReleaseAll = (frame.button_edges & ButtonBit.BTN_RELEASE) !== 0;
 
-  // Per-hand contact resolution needs to know (a) what the opponent is
-  // defending and (b) whether the target is out of reach. Stage 1 keeps
-  // both stubbed (no top AI / no reach physics), so PARRIED can only come
-  // from the 400ms short-memory path. This is sufficient for logic tests;
-  // opponent-defence wiring arrives with the defender input pass.
-  const leftResult = tickHand(
-    prev.leftHand,
-    {
-      nowMs,
-      triggerValue: frame.l_trigger,
-      targetZone: intent.grip.l_hand_target,
-      forceReleaseAll,
-      opponentDefendsThisZone: false,
-      opponentCutSucceeded: false,
-      targetOutOfReach: false,
-    },
-  );
+  const leftResult = tickHand(prev.leftHand, {
+    nowMs,
+    triggerValue: frame.l_trigger,
+    targetZone: intent.grip.l_hand_target,
+    forceReleaseAll,
+    opponentDefendsThisZone: false,
+    opponentCutSucceeded: false,
+    targetOutOfReach: false,
+  });
   pushAll(eventsOut, leftResult.events);
 
-  const rightResult = tickHand(
-    prev.rightHand,
-    {
-      nowMs,
-      triggerValue: frame.r_trigger,
-      targetZone: intent.grip.r_hand_target,
-      forceReleaseAll,
-      opponentDefendsThisZone: false,
-      opponentCutSucceeded: false,
-      targetOutOfReach: false,
-    },
-  );
+  const rightResult = tickHand(prev.rightHand, {
+    nowMs,
+    triggerValue: frame.r_trigger,
+    targetZone: intent.grip.r_hand_target,
+    forceReleaseAll,
+    opponentDefendsThisZone: false,
+    opponentCutSucceeded: false,
+    targetOutOfReach: false,
+  });
   pushAll(eventsOut, rightResult.events);
 
   const leftBumperEdge = intent.discrete.some(
@@ -194,8 +285,6 @@ function tickBottomActor(
   });
   pushAll(eventsOut, rightFootResult.events);
 
-  // posture_break, stamina, arm_extracted are not yet driven — preserved
-  // from prev. See §3.3 / §5 / §4.1 for the update rules to implement.
   return Object.freeze({
     ...prev,
     leftHand: leftResult.next,
@@ -205,15 +294,8 @@ function tickBottomActor(
   });
 }
 
-// Passive top actor: hands stay IDLE, feet stay LOCKED / whatever they
-// were. We still advance time indices so tests that inspect timing fields
-// see a monotonic clock on the top side too.
 function tickTopActorPassive(prev: ActorState, nowMs: number): ActorState {
-  const rest = {
-    nowMs,
-    bumperEdge: false,
-    opponentPostureSagittal: 0,
-  };
+  const rest = { nowMs, bumperEdge: false, opponentPostureSagittal: 0 };
   const leftFoot = tickFoot(prev.leftFoot, rest).next;
   const rightFoot = tickFoot(prev.rightFoot, rest).next;
 
@@ -242,10 +324,13 @@ function pushAll<T>(target: T[], src: readonly T[]): void {
   for (const x of src) target.push(x);
 }
 
-// Small accessors for HUD / tests — keeps main.ts from poking at internals.
 export function handOf(actor: ActorState, side: HandSide): HandFSM {
   return side === "L" ? actor.leftHand : actor.rightHand;
 }
 export function footOf(actor: ActorState, side: FootSide): FootFSM {
   return side === "L" ? actor.leftFoot : actor.rightFoot;
 }
+
+// Re-export for convenience so main.ts and tests don't need to import
+// multiple files for common symbols.
+export { TIME_SCALE };
