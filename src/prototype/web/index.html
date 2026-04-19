@@ -37,6 +37,55 @@
         pointer-events: none;
         max-width: 440px;
       }
+      #legend {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        padding: 10px 12px;
+        background: rgba(0, 0, 0, 0.55);
+        border: 1px solid #2a2a30;
+        border-radius: 6px;
+        font-size: 11px;
+        line-height: 1.5;
+        pointer-events: none;
+        max-width: 360px;
+        color: #c8c8cc;
+      }
+      #legend h3 {
+        margin: 0 0 6px 0;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        color: #9ea0ff;
+        text-transform: uppercase;
+      }
+      #legend table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-bottom: 8px;
+      }
+      #legend td {
+        padding: 1px 4px;
+        vertical-align: top;
+      }
+      #legend td.k {
+        color: #e4cf88;
+        white-space: nowrap;
+        width: 30%;
+      }
+      #legend td.p {
+        color: #88c4e4;
+        white-space: nowrap;
+        width: 26%;
+      }
+      #legend td.desc {
+        color: #a8a8ac;
+      }
+      #legend .note {
+        font-size: 10px;
+        color: #6a6a70;
+        margin-top: 6px;
+      }
       #device-hint {
         position: absolute;
         bottom: 12px;
@@ -53,6 +102,48 @@
     <div id="app">
       <canvas id="three-canvas"></canvas>
       <pre id="debug-hud">input: (waiting)</pre>
+
+      <div id="legend">
+        <h3>Attacker (Bottom) controls</h3>
+        <table>
+          <tr><td class="k">W / A / S / D</td><td class="p">L-stick</td><td class="desc">hip angle + push/lateral</td></tr>
+          <tr><td class="k">↑ ← ↓ →</td><td class="p">R-stick</td><td class="desc">grip target zone</td></tr>
+          <tr><td class="k">F</td><td class="p">L-trigger</td><td class="desc">left-hand grip strength</td></tr>
+          <tr><td class="k">J</td><td class="p">R-trigger</td><td class="desc">right-hand grip strength</td></tr>
+          <tr><td class="k">R</td><td class="p">L-bumper</td><td class="desc">left foot hook toggle</td></tr>
+          <tr><td class="k">U</td><td class="p">R-bumper</td><td class="desc">right foot hook toggle</td></tr>
+          <tr><td class="k">Space</td><td class="p">✕ / A</td><td class="desc">base (hold) / triangle commit</td></tr>
+          <tr><td class="k">X</td><td class="p">◯ / B</td><td class="desc">release all grips</td></tr>
+          <tr><td class="k">C</td><td class="p">△ / Y</td><td class="desc">breath (recover stamina)</td></tr>
+          <tr><td class="k">V</td><td class="p">□ / X</td><td class="desc">(attacker: unused)</td></tr>
+          <tr><td class="k">Esc</td><td class="p">Options</td><td class="desc">pause</td></tr>
+        </table>
+
+        <h3>Attacker commits (window OPEN only)</h3>
+        <table>
+          <tr><td class="k">R + A/D</td><td class="p">LB + LS↔</td><td class="desc">scissor sweep</td></tr>
+          <tr><td class="k">U + W</td><td class="p">RB + LS↑</td><td class="desc">flower sweep</td></tr>
+          <tr><td class="k">Space (500ms)</td><td class="p">A hold</td><td class="desc">triangle choke</td></tr>
+          <tr><td class="k">R + ↑</td><td class="p">LB + RS↑</td><td class="desc">omoplata</td></tr>
+          <tr><td class="k">J (0→1 in 200ms)</td><td class="p">RT quick tap</td><td class="desc">hip bump</td></tr>
+          <tr><td class="k">F + J (max)</td><td class="p">LT + RT max</td><td class="desc">cross collar</td></tr>
+        </table>
+
+        <h3>Defender (Top) controls</h3>
+        <table>
+          <tr><td class="k">W / A / S / D</td><td class="p">L-stick</td><td class="desc">weight fwd/lateral</td></tr>
+          <tr><td class="k">↑ ← ↓ →</td><td class="p">R-stick</td><td class="desc">base support / cut dir</td></tr>
+          <tr><td class="k">F / J</td><td class="p">L/R-trigger</td><td class="desc">base hand pressure</td></tr>
+          <tr><td class="k">R / U</td><td class="p">L/R-bumper</td><td class="desc">cut attempt (L/R hand)</td></tr>
+          <tr><td class="k">Space</td><td class="p">✕ / A</td><td class="desc">posture recovery (hold)</td></tr>
+          <tr><td class="k">X</td><td class="p">◯ / B</td><td class="desc">release all base</td></tr>
+          <tr><td class="k">C</td><td class="p">△ / Y</td><td class="desc">breath</td></tr>
+          <tr><td class="k">V</td><td class="p">□ / X</td><td class="desc">pass commit</td></tr>
+        </table>
+
+        <div class="note">Gamepad (Xbox / DualSense) auto-detects if connected; otherwise keyboard is active.</div>
+      </div>
+
       <div id="device-hint">
         Stage 1 Prototype · Gamepad (Xbox/DualSense) or WASD/Arrows/F/J
       </div>
