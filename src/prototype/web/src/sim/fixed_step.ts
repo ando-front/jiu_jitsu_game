@@ -13,6 +13,7 @@
 
 import type { InputFrame } from "../input/types.js";
 import type { Intent } from "../input/intent.js";
+import type { DefenseIntent } from "../input/intent_defense.js";
 import {
   stepSimulation,
   type GameState,
@@ -25,7 +26,13 @@ export const FIXED_STEP_MS = 1000 / 60;
 export const MAX_STEPS_PER_ADVANCE = 8;
 
 export type StepProvider = Readonly<{
-  sample: (stepNowMs: number) => { frame: InputFrame; intent: Intent };
+  sample: (stepNowMs: number) => {
+    frame: InputFrame;
+    intent: Intent;
+    // Optional defender intent for this step. Omit or return null while
+    // playing as Bottom; return a DefenseIntent while playing as Top.
+    defense?: DefenseIntent | null;
+  };
   // Given the freshly-sampled frame/intent + the CURRENT game state,
   // return a technique commit to apply this step (or null). Invoked once
   // per fixed step, after sample() but before stepSimulation(). The
@@ -61,7 +68,7 @@ export function advance(
     stepsRun += 1;
     simClock += fixedDtMs;
 
-    const { frame, intent } = provider.sample(simClock);
+    const { frame, intent, defense } = provider.sample(simClock);
     const timeScale = game.time.scale;
     const gameDtMs = fixedDtMs * timeScale;
     const confirmed = provider.resolveCommit?.(frame, intent, game, fixedDtMs) ?? null;
@@ -70,6 +77,7 @@ export function advance(
       realDtMs: fixedDtMs,
       gameDtMs,
       confirmedTechnique: confirmed,
+      defenseIntent: defense ?? null,
     };
     const res = stepSimulation(game, frame, intent, opts);
     game = res.nextState;

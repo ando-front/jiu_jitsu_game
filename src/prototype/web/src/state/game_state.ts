@@ -57,6 +57,7 @@ import {
   updateControlLayer,
   type ControlLayer,
 } from "./control_layer.js";
+import type { DefenseIntent } from "../input/intent_defense.js";
 
 export type Vec2 = Readonly<{ x: number; y: number }>;
 
@@ -146,6 +147,10 @@ export type StepOptions = Readonly<{
   realDtMs: number;
   gameDtMs: number;
   confirmedTechnique: Technique | null;
+  // Optional defender intent. Stage 1 keeps this null (passive top); wiring
+  // a real DefenseIntent activates recovery pressure, base holds, and the
+  // defender-base-hold flag feeding arm_extracted's clear clause.
+  defenseIntent?: DefenseIntent | null;
 }>;
 
 export function stepSimulation(
@@ -156,6 +161,7 @@ export function stepSimulation(
 ): { nextState: GameState; events: readonly SimEvent[] } {
   const events: SimEvent[] = [];
   const nowMs = frame.timestamp;
+  const defense = opts.defenseIntent ?? null;
 
   // §5.3 — clamp trigger values by the stamina ceiling BEFORE FSMs read
   // them. This enforces "cross-collar at strength ≥ 0.7 becomes impossible
@@ -176,13 +182,14 @@ export function stepSimulation(
   if (nextBottomFsm.rightHand.state === "GRIPPED" && nextBottomFsm.rightHand.target !== null) {
     gripPulls.push(gripPullVector(nextBottomFsm.rightHand.target, effectiveTriggerR));
   }
+  const defenderRecovery = computeDefenderRecovery(defense);
   const nextTopPosture = updatePostureBreak(
     prev.top.postureBreak,
     {
       dtMs: opts.gameDtMs,
       attackerHip: intent.hip,
       gripPulls,
-      defenderRecovery: ZERO_VEC2,
+      defenderRecovery,
     },
   );
 
@@ -195,7 +202,7 @@ export function stepSimulation(
     triggerL: effectiveTriggerL,
     triggerR: effectiveTriggerR,
     attackerHip: intent.hip,
-    defenderBaseHold: false,
+    defenderBaseHold: defenderIsBasingBicep(defense),
   });
   const nextTop: ActorState = Object.freeze({
     ...nextTopFsm,
@@ -384,6 +391,51 @@ function tickTopActorPassive(prev: ActorState, nowMs: number): ActorState {
 
 function pushAll<T>(target: T[], src: readonly T[]): void {
   for (const x of src) target.push(x);
+}
+
+// Defender contributions to continuous updates. Stage 1 keeps these
+// intentionally narrow: recovery shoves posture_break toward origin when
+// weight_forward is set, and CHEST/HIP base pressure reinforces it.
+// BICEP pressure is the one signal that feeds arm_extracted's clear
+// clause (§4.1 "BTN_BASE hold retracts the arm").
+function computeDefenderRecovery(defense: DefenseIntent | null): Vec2 {
+  if (defense === null) return ZERO_VEC2;
+  // Weight-forward reads as the defender "pushing back" on the attacker's
+  // sagittal break. Weight-lateral mirrors on the lateral axis.
+  let x = defense.hip.weight_lateral;
+  let y = defense.hip.weight_forward;
+
+  // CHEST or HIP base pressure contributes additively to sagittal recovery.
+  if (defense.base.l_hand_target === "CHEST" || defense.base.l_hand_target === "HIP") {
+    y += defense.base.l_base_pressure * 0.5;
+  }
+  if (defense.base.r_hand_target === "CHEST" || defense.base.r_hand_target === "HIP") {
+    y += defense.base.r_base_pressure * 0.5;
+  }
+
+  // Clamp to keep the recovery vector in a sane range.
+  const mag = Math.hypot(x, y);
+  if (mag > 1) {
+    const s = 1 / mag;
+    x *= s;
+    y *= s;
+  }
+  return Object.freeze({ x, y });
+}
+
+function defenderIsBasingBicep(defense: DefenseIntent | null): boolean {
+  if (defense === null) return false;
+  const lBicep =
+    (defense.base.l_hand_target === "BICEP_L" || defense.base.l_hand_target === "BICEP_R") &&
+    defense.base.l_base_pressure >= 0.6;
+  const rBicep =
+    (defense.base.r_hand_target === "BICEP_L" || defense.base.r_hand_target === "BICEP_R") &&
+    defense.base.r_base_pressure >= 0.6;
+  // Also consider the RECOVERY_HOLD discrete intent (§B.6.1) as a general
+  // "defender is actively retracting" signal that qualifies for clearing
+  // arm_extracted.
+  const recoveryHold = defense.discrete.some((d) => d.kind === "RECOVERY_HOLD");
+  return lBicep || rBicep || recoveryHold;
 }
 
 export function handOf(actor: ActorState, side: HandSide): HandFSM {
