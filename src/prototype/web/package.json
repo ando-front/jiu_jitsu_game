@@ -1,0 +1,24 @@
+{
+  "name": "jiu-jitsu-web-prototype",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Stage 1 logic prototype for the BJJ simulator (disposable)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run"
+  },
+  "dependencies": {
+    "three": "^0.165.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.165.0",
+    "typescript": "^5.5.3",
+    "vite": "^5.3.4",
+    "vitest": "^2.0.4"
+  }
+}

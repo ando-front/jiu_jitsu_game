@@ -53,6 +53,11 @@ venv/
 node_modules/
 package-lock.json
 
+# Vite / TypeScript (Stage 1 web prototype)
+dist/
+.vite/
+*.tsbuildinfo
+
 # Large binary assets (track with Git LFS instead)
 # *.fbx
 # *.uasset
