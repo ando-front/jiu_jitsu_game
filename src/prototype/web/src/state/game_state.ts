@@ -73,6 +73,12 @@ import {
   type PassAttemptState,
   type PassTickEvent,
 } from "./pass_attempt.js";
+import {
+  INITIAL_CUT_ATTEMPTS,
+  tickCutAttempts,
+  type CutAttempts,
+  type CutTickEvent,
+} from "./cut_attempt.js";
 import type { DefenseIntent } from "../input/intent_defense.js";
 
 export type Vec2 = Readonly<{ x: number; y: number }>;
@@ -132,6 +138,7 @@ export type GameState = Readonly<{
   judgmentWindow: JudgmentWindow;
   counterWindow: CounterWindow;
   passAttempt: PassAttemptState;
+  cutAttempts: CutAttempts;
   sessionEnded: boolean;
   // §D.2 — sign snapshot of the attacker's lateral hip input captured at
   // attacker-window OPENING. Used by Layer D_defense to resolve
@@ -153,6 +160,7 @@ export function initialGameState(nowMs: number = 0): GameState {
     judgmentWindow: INITIAL_JUDGMENT_WINDOW,
     counterWindow: INITIAL_COUNTER_WINDOW,
     passAttempt: INITIAL_PASS_ATTEMPT,
+    cutAttempts: INITIAL_CUT_ATTEMPTS,
     sessionEnded: false,
     attackerSweepLateralSign: 0,
     time: INITIAL_TIME_CONTEXT,
@@ -170,6 +178,7 @@ export type SimEvent =
   | JudgmentTickEvent
   | CounterTickEvent
   | PassTickEvent
+  | CutTickEvent
   | { kind: "GUARD_OPENED" }
   | { kind: "SESSION_ENDED"; reason: "PASS_SUCCESS" | "TECHNIQUE_FINISHED" | "GUARD_OPENED" };
 
@@ -202,8 +211,43 @@ export function stepSimulation(
   const effectiveTriggerL = Math.min(frame.l_trigger, bottomCeiling);
   const effectiveTriggerR = Math.min(frame.r_trigger, bottomCeiling);
 
+  // 0. Cut-attempt tick. Runs BEFORE the attacker HandFSM tick so its
+  // CUT_SUCCEEDED events can force-RETRACT the targeted attacker hand in
+  // the same frame.
+  const cutCommits: { L: { rs: Vec2 } | null; R: { rs: Vec2 } | null } = {
+    L: null,
+    R: null,
+  };
+  if (defense !== null) {
+    for (const d of defense.discrete) {
+      if (d.kind === "CUT_ATTEMPT") {
+        cutCommits[d.side] = { rs: d.rs };
+      }
+    }
+  }
+  const cutResult = tickCutAttempts(prev.cutAttempts, {
+    nowMs,
+    leftCommit: cutCommits.L,
+    rightCommit: cutCommits.R,
+    attackerLeft: prev.bottom.leftHand,
+    attackerRight: prev.bottom.rightHand,
+    attackerTriggerL: effectiveTriggerL,
+    attackerTriggerR: effectiveTriggerR,
+  });
+  for (const e of cutResult.events) events.push(e);
+  const cutSucceededLeft = cutResult.events.some(
+    (e) => e.kind === "CUT_SUCCEEDED" && "attackerSide" in e && e.attackerSide === "L",
+  );
+  const cutSucceededRight = cutResult.events.some(
+    (e) => e.kind === "CUT_SUCCEEDED" && "attackerSide" in e && e.attackerSide === "R",
+  );
+
   // 1. ActorState FSMs.
-  const nextBottomFsm = tickBottomActor(prev.bottom, prev.top, frame, intent, nowMs, events, effectiveTriggerL, effectiveTriggerR);
+  const nextBottomFsm = tickBottomActor(
+    prev.bottom, prev.top, frame, intent, nowMs, events,
+    effectiveTriggerL, effectiveTriggerR,
+    cutSucceededLeft, cutSucceededRight,
+  );
   const nextTopFsm = tickTopActorPassive(prev.top, nowMs);
 
   // 2. posture_break. Bottom's inputs drive the TOP actor's break.
@@ -461,6 +505,7 @@ export function stepSimulation(
     judgmentWindow: finalJudgmentWindow,
     counterWindow: counterResult.next,
     passAttempt: passResult.next,
+    cutAttempts: cutResult.next,
     sessionEnded,
     attackerSweepLateralSign,
     time: nextTime,
@@ -485,6 +530,8 @@ function tickBottomActor(
   eventsOut: SimEvent[],
   effectiveTriggerL: number,
   effectiveTriggerR: number,
+  cutSucceededOnLeftHand: boolean,
+  cutSucceededOnRightHand: boolean,
 ): ActorState {
   const forceReleaseAll = (frame.button_edges & ButtonBit.BTN_RELEASE) !== 0;
 
@@ -494,7 +541,7 @@ function tickBottomActor(
     targetZone: intent.grip.l_hand_target,
     forceReleaseAll,
     opponentDefendsThisZone: false,
-    opponentCutSucceeded: false,
+    opponentCutSucceeded: cutSucceededOnLeftHand,
     targetOutOfReach: false,
   });
   pushAll(eventsOut, leftResult.events);
@@ -505,7 +552,7 @@ function tickBottomActor(
     targetZone: intent.grip.r_hand_target,
     forceReleaseAll,
     opponentDefendsThisZone: false,
-    opponentCutSucceeded: false,
+    opponentCutSucceeded: cutSucceededOnRightHand,
     targetOutOfReach: false,
   });
   pushAll(eventsOut, rightResult.events);

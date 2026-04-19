@@ -12,6 +12,7 @@ import { INITIAL_LAYER_B_STATE, transformLayerB, type LayerBState } from "./inpu
 import { INITIAL_LAYER_B_DEFENSE_STATE, transformLayerBDefense, type LayerBDefenseState } from "./input/layerB_defense.js";
 import { INITIAL_LAYER_D_STATE, resolveLayerD, type LayerDState } from "./input/layerD.js";
 import { INITIAL_LAYER_D_DEFENSE_STATE, resolveLayerDDefense, type LayerDDefenseState } from "./input/layerD_defense.js";
+import { opponentIntent } from "./ai/opponent_ai.js";
 import { KeyboardSource } from "./input/keyboard.js";
 import { LayerA } from "./input/layerA.js";
 import { ButtonBit, type InputFrame } from "./input/types.js";
@@ -111,17 +112,20 @@ function frame(now: number) {
         const b = transformLayerB(inputFrame, bState);
         bState = b.nextState;
         lastIntent = b.intent;
-        lastDefense = ZERO_DEFENSE_INTENT;
-        return { frame: inputFrame, intent: b.intent, defense: ZERO_DEFENSE_INTENT };
+        // AI plays TOP — observes GameState AFTER previous step.
+        const ai = opponentIntent(simState.game, "Top");
+        const aiDefense = ai.role === "Top" ? ai.defense : ZERO_DEFENSE_INTENT;
+        lastDefense = aiDefense;
+        return { frame: inputFrame, intent: b.intent, defense: aiDefense };
       } else {
         const d = transformLayerBDefense(inputFrame, bDefState);
         bDefState = d.nextState;
         lastDefense = d.intent;
-        // Top-side driver: attacker FSMs stay IDLE by feeding them a
-        // neutral Intent. The defender intent flows into stepSimulation
-        // via StepOptions.defenseIntent and drives recovery / cuts.
-        lastIntent = NEUTRAL_INTENT;
-        return { frame: inputFrame, intent: NEUTRAL_INTENT, defense: d.intent };
+        // AI plays BOTTOM — observes GameState AFTER previous step.
+        const ai = opponentIntent(simState.game, "Bottom");
+        const aiIntent = ai.role === "Bottom" ? ai.intent : NEUTRAL_INTENT;
+        lastIntent = aiIntent;
+        return { frame: inputFrame, intent: aiIntent, defense: d.intent };
       }
     },
     resolveCommit: (f, intent, game, dtMs) => {
