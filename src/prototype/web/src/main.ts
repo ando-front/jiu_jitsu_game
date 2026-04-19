@@ -1,8 +1,9 @@
 // PLATFORM — entry point. rAF-driven fixed-timestep loop:
-// Layer A → Layer B → stepSimulation → Three.js + HUD.
+// Layer A → Layer B → Layer D → stepSimulation → Three.js + HUD.
 
 import { GamepadSource } from "./input/gamepad.js";
 import { INITIAL_LAYER_B_STATE, transformLayerB, type LayerBState } from "./input/layerB.js";
+import { INITIAL_LAYER_D_STATE, resolveLayerD, type LayerDState } from "./input/layerD.js";
 import { KeyboardSource } from "./input/keyboard.js";
 import { LayerA } from "./input/layerA.js";
 import { ButtonBit, type InputFrame } from "./input/types.js";
@@ -27,6 +28,7 @@ const gamepad = new GamepadSource();
 const layerA = new LayerA(gamepad, keyboard);
 
 let bState: LayerBState = INITIAL_LAYER_B_STATE;
+let dState: LayerDState = INITIAL_LAYER_D_STATE;
 let simState: FixedStepState = Object.freeze({
   accumulatorMs: 0,
   simClockMs: performance.now(),
@@ -34,8 +36,6 @@ let simState: FixedStepState = Object.freeze({
 });
 let lastRafMs = performance.now();
 
-// HUD snapshot — filled in from the latest fixed step so the render pass
-// can display it without re-running the simulation.
 let lastIntent: Intent | null = null;
 let lastFrame: InputFrame | null = null;
 
@@ -51,6 +51,19 @@ function frame(now: number) {
       lastFrame = inputFrame;
       lastIntent = b.intent;
       return { frame: inputFrame, intent: b.intent };
+    },
+    resolveCommit: (f, intent, game, dtMs) => {
+      const windowIsOpen = game.judgmentWindow.state === "OPEN";
+      const r = resolveLayerD(dState, {
+        nowMs: f.timestamp,
+        dtMs,
+        frame: f,
+        hip: intent.hip,
+        candidates: game.judgmentWindow.candidates,
+        windowIsOpen,
+      });
+      dState = r.next;
+      return r.confirmedTechnique;
     },
   });
   simState = res.next;
@@ -84,12 +97,18 @@ function renderHud(f: InputFrame, intent: Intent, g: GameState, stepsThisRaf: nu
   lines.push(`grip L ${intent.grip.l_hand_target ?? "·"} (${fmt(intent.grip.l_grip_strength)})`);
   lines.push(`grip R ${intent.grip.r_hand_target ?? "·"} (${fmt(intent.grip.r_grip_strength)})`);
   lines.push(`discrete ${formatDiscrete(intent.discrete)}`);
-  lines.push("── GameState ──");
+  lines.push("── Actor (bottom) ──");
+  lines.push(`L-hand ${g.bottom.leftHand.state} → ${g.bottom.leftHand.target ?? "·"}`);
+  lines.push(`R-hand ${g.bottom.rightHand.state} → ${g.bottom.rightHand.target ?? "·"}`);
+  lines.push(`feet L=${g.bottom.leftFoot.state} R=${g.bottom.rightFoot.state}`);
+  lines.push(`stamina ${fmt(g.bottom.stamina)}`);
+  lines.push("── Actor (top) ──");
+  lines.push(`postureBreak (${fmt(g.top.postureBreak.x)}, ${fmt(g.top.postureBreak.y)}) bucket=${breakBucket(g.top.postureBreak)}`);
+  lines.push(`armExtracted L=${g.topArmExtracted.left} R=${g.topArmExtracted.right}`);
+  lines.push(`sustain L=${g.topArmExtracted.leftSustainMs.toFixed(0)}ms R=${g.topArmExtracted.rightSustainMs.toFixed(0)}ms`);
+  lines.push("── Session ──");
   lines.push(`guard ${g.guard}`);
-  lines.push(`bottom L-hand ${g.bottom.leftHand.state} → ${g.bottom.leftHand.target ?? "·"}`);
-  lines.push(`bottom R-hand ${g.bottom.rightHand.state} → ${g.bottom.rightHand.target ?? "·"}`);
-  lines.push(`bottom feet  L=${g.bottom.leftFoot.state} R=${g.bottom.rightFoot.state}`);
-  lines.push(`top postureBreak (${fmt(g.top.postureBreak.x)}, ${fmt(g.top.postureBreak.y)}) bucket=${breakBucket(g.top.postureBreak)}`);
+  lines.push(`initiative ${g.control.initiative}${g.control.lockedByWindow ? " (locked)" : ""}`);
   lines.push(`sustained hipPushMs ${g.sustained.hipPushMs.toFixed(0)}`);
   lines.push(`judgmentWindow ${g.judgmentWindow.state}  timeScale ${g.time.scale.toFixed(2)}`);
   lines.push(`candidates ${g.judgmentWindow.candidates.join(" ") || "·"}`);

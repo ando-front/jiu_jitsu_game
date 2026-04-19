@@ -99,9 +99,12 @@ export function updateStamina(
   const staticHip = hipMag < cfg.hipInputStaticThreshold;
   if (inputs.breathPressed && !anyHandGripped(inputs.actor) && staticHip) {
     ratePerSec += cfg.breathRecoverPerSec;
-  } else if (allLimbsIdle(inputs.actor) && !anyHandGripped(inputs.actor)) {
-    // Idle recovery only applies when nothing is happening. Breath
-    // recovery takes priority because it's explicit player intent.
+  } else if (allLimbsIdle(inputs.actor) && !anyHandGripped(inputs.actor) && staticHip) {
+    // Idle recovery only applies when nothing is happening. "Nothing" means
+    // all limbs IDLE, no grips, and the hip is not being pushed around —
+    // otherwise a player who's actively pumping the stick but hasn't
+    // engaged their hands would still recover, which contradicts the
+    // "doing nothing" intent of §5.2 last row.
     ratePerSec += cfg.idleRecoverPerSec;
   }
 
