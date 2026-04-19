@@ -8,7 +8,7 @@ import {
   tickFoot,
   type FootFSM,
   type FootTickInput,
-} from "../src/state/foot_fsm.js";
+} from "../../src/state/foot_fsm.js";
 
 function baseInput(over: Partial<FootTickInput> = {}): FootTickInput {
   return {

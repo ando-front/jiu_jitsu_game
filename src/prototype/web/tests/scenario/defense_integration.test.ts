@@ -8,15 +8,15 @@ import {
   initialGameState,
   stepSimulation,
   type GameState,
-} from "../src/state/game_state.js";
-import type { InputFrame } from "../src/input/types.js";
-import type { Intent } from "../src/input/intent.js";
+} from "../../src/state/game_state.js";
+import type { InputFrame } from "../../src/input/types.js";
+import type { Intent } from "../../src/input/intent.js";
 import {
   ZERO_DEFENSE_INTENT,
   type DefenseIntent,
-} from "../src/input/intent_defense.js";
-import { INITIAL_ARM_EXTRACTED } from "../src/state/arm_extracted.js";
-import type { HandFSM } from "../src/state/hand_fsm.js";
+} from "../../src/input/intent_defense.js";
+import { INITIAL_ARM_EXTRACTED } from "../../src/state/arm_extracted.js";
+import type { HandFSM } from "../../src/state/hand_fsm.js";
 
 function gripped(side: "L" | "R", zone: "SLEEVE_R" | "SLEEVE_L" | "WRIST_R"): HandFSM {
   return Object.freeze({

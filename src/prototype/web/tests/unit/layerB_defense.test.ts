@@ -7,9 +7,9 @@ import {
   computeTopBaseIntent,
   computeTopHipIntent,
   transformLayerBDefense,
-} from "../src/input/layerB_defense.js";
-import type { BaseZone, DefenseDiscreteIntent } from "../src/input/intent_defense.js";
-import { ButtonBit, type InputFrame } from "../src/input/types.js";
+} from "../../src/input/layerB_defense.js";
+import type { BaseZone, DefenseDiscreteIntent } from "../../src/input/intent_defense.js";
+import { ButtonBit, type InputFrame } from "../../src/input/types.js";
 
 function frame(over: Partial<InputFrame> = {}): InputFrame {
   return Object.freeze({

@@ -7,11 +7,11 @@ import {
   applyTriggerDeadzone,
   computeButtonEdges,
   eightWayFromDigital,
-} from "../src/input/transform.js";
-import { KeyboardSource } from "../src/input/keyboard.js";
-import { GamepadSource } from "../src/input/gamepad.js";
-import { LayerA } from "../src/input/layerA.js";
-import { ButtonBit } from "../src/input/types.js";
+} from "../../src/input/transform.js";
+import { KeyboardSource } from "../../src/input/keyboard.js";
+import { GamepadSource } from "../../src/input/gamepad.js";
+import { LayerA } from "../../src/input/layerA.js";
+import { ButtonBit } from "../../src/input/types.js";
 
 describe("stick deadzone + curve (§A.3.1)", () => {
   it("zeroes out inputs inside the inner deadzone (0.15)", () => {

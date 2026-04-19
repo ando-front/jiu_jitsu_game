@@ -10,9 +10,9 @@ import {
   computeHipIntent,
   transformLayerB,
   type LayerBState,
-} from "../src/input/layerB.js";
-import type { DiscreteIntent, GripZone } from "../src/input/intent.js";
-import { ButtonBit, type InputFrame, type Vec2 } from "../src/input/types.js";
+} from "../../src/input/layerB.js";
+import type { DiscreteIntent, GripZone } from "../../src/input/intent.js";
+import { ButtonBit, type InputFrame, type Vec2 } from "../../src/input/types.js";
 
 function makeFrame(overrides: Partial<InputFrame> = {}): InputFrame {
   const base: InputFrame = {

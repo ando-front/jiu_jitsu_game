@@ -11,6 +11,7 @@ import { GamepadSource } from "./input/gamepad.js";
 import { INITIAL_LAYER_B_STATE, transformLayerB, type LayerBState } from "./input/layerB.js";
 import { INITIAL_LAYER_B_DEFENSE_STATE, transformLayerBDefense, type LayerBDefenseState } from "./input/layerB_defense.js";
 import { INITIAL_LAYER_D_STATE, resolveLayerD, type LayerDState } from "./input/layerD.js";
+import { INITIAL_LAYER_D_DEFENSE_STATE, resolveLayerDDefense, type LayerDDefenseState } from "./input/layerD_defense.js";
 import { KeyboardSource } from "./input/keyboard.js";
 import { LayerA } from "./input/layerA.js";
 import { ButtonBit, type InputFrame } from "./input/types.js";
@@ -67,6 +68,7 @@ const layerA = new LayerA(gamepad, keyboard);
 let bState: LayerBState = INITIAL_LAYER_B_STATE;
 let bDefState: LayerBDefenseState = INITIAL_LAYER_B_DEFENSE_STATE;
 let dState: LayerDState = INITIAL_LAYER_D_STATE;
+let dDefState: LayerDDefenseState = INITIAL_LAYER_D_DEFENSE_STATE;
 
 // -- Scene & sim --------------------------------------------------------------
 
@@ -98,6 +100,8 @@ function frame(now: number) {
     return;
   }
 
+  scene3d.updatePulses(realDt);
+
   const res = advance(simState, realDt, {
     sample: (stepNowMs: number) => {
       const inputFrame = layerA.sample(stepNowMs);
@@ -121,8 +125,6 @@ function frame(now: number) {
       }
     },
     resolveCommit: (f, intent, game, dtMs) => {
-      // Commit resolution only fires while playing as attacker in Stage 1.
-      // Defender-side counter commits belong to input_system_defense_v1 §D.
       if (role !== "Bottom") return null;
       const windowIsOpen = game.judgmentWindow.state === "OPEN";
       const r = resolveLayerD(dState, {
@@ -136,8 +138,52 @@ function frame(now: number) {
       dState = r.next;
       return r.confirmedTechnique;
     },
+    resolveCounterCommit: (f, game, dtMs) => {
+      if (role !== "Top") return null;
+      const windowIsOpen = game.counterWindow.state === "OPEN";
+      const r = resolveLayerDDefense(dDefState, {
+        nowMs: f.timestamp,
+        dtMs,
+        frame: f,
+        candidates: game.counterWindow.candidates,
+        windowIsOpen,
+        attackerSweepLateralSign: game.attackerSweepLateralSign,
+      });
+      dDefState = r.next;
+      return r.confirmedCounter;
+    },
   });
   simState = res.next;
+
+  // Map SimEvents to scene pulses before rendering.
+  for (const ev of res.events) {
+    switch (ev.kind) {
+      case "GRIPPED":
+        scene3d.pulseShake("top", 0.04, 120);
+        break;
+      case "PARRIED":
+        scene3d.pulseShake("bottom", 0.06, 160);
+        break;
+      case "GRIP_BROKEN":
+        scene3d.pulseShake("bottom", 0.05, 140);
+        break;
+      case "TECHNIQUE_CONFIRMED":
+        scene3d.pulseFlash(0xffd98c, 220);
+        scene3d.pulseShake("top", 0.15, 320);
+        break;
+      case "COUNTER_CONFIRMED":
+        scene3d.pulseFlash(0x9ec9ff, 220);
+        scene3d.pulseShake("bottom", 0.15, 320);
+        break;
+      case "WINDOW_OPENING":
+      case "COUNTER_WINDOW_OPENING":
+        scene3d.pulseFlash(0xfff2d0, 80);
+        break;
+      case "GUARD_OPENED":
+        scene3d.pulseFlash(0xff7070, 360);
+        break;
+    }
+  }
 
   const game = simState.game;
   applyToScene(game);
@@ -247,6 +293,8 @@ function renderHud(f: InputFrame, intent: Intent, g: GameState, stepsThisRaf: nu
   lines.push(`initiative ${g.control.initiative}${g.control.lockedByWindow ? " (locked)" : ""}`);
   lines.push(`judgmentWindow ${g.judgmentWindow.state}  timeScale ${g.time.scale.toFixed(2)}`);
   lines.push(`candidates ${g.judgmentWindow.candidates.join(" ") || "·"}`);
+  lines.push(`counterWindow  ${g.counterWindow.state}  sweepSign=${g.attackerSweepLateralSign}`);
+  lines.push(`counter-cands  ${g.counterWindow.candidates.join(" ") || "·"}`);
   return lines.join("\n");
 }
 

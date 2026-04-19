@@ -8,7 +8,7 @@ import {
   gripPullVector,
   updatePostureBreak,
   type PostureBreakInputs,
-} from "../src/state/posture_break.js";
+} from "../../src/state/posture_break.js";
 
 function inputs(over: Partial<PostureBreakInputs> = {}): PostureBreakInputs {
   return {

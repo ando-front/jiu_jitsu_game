@@ -21,6 +21,7 @@ import {
   type StepOptions,
 } from "../state/game_state.js";
 import type { Technique } from "../state/judgment_window.js";
+import type { CounterTechnique } from "../state/counter_window.js";
 
 export const FIXED_STEP_MS = 1000 / 60;
 export const MAX_STEPS_PER_ADVANCE = 8;
@@ -43,6 +44,12 @@ export type StepProvider = Readonly<{
     game: GameState,
     dtMs: number,
   ) => Technique | null;
+  // Symmetric hook for the defender's counter window (§D.2).
+  resolveCounterCommit?: (
+    frame: InputFrame,
+    game: GameState,
+    dtMs: number,
+  ) => CounterTechnique | null;
 }>;
 
 export type FixedStepState = Readonly<{
@@ -72,12 +79,15 @@ export function advance(
     const timeScale = game.time.scale;
     const gameDtMs = fixedDtMs * timeScale;
     const confirmed = provider.resolveCommit?.(frame, intent, game, fixedDtMs) ?? null;
+    const confirmedCounter =
+      provider.resolveCounterCommit?.(frame, game, fixedDtMs) ?? null;
 
     const opts: StepOptions = {
       realDtMs: fixedDtMs,
       gameDtMs,
       confirmedTechnique: confirmed,
       defenseIntent: defense ?? null,
+      confirmedCounter,
     };
     const res = stepSimulation(game, frame, intent, opts);
     game = res.nextState;

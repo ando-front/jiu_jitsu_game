@@ -2,11 +2,11 @@
 // References docs/design/architecture_overview_v1.md §7 and state_machines_v1.md §6 / §10.
 
 import { describe, expect, it } from "vitest";
-import { initialGameState, stepSimulation, type GameState } from "../src/state/game_state.js";
-import { HAND_TIMING } from "../src/state/hand_fsm.js";
-import { FOOT_TIMING, LOCKING_POSTURE_THRESHOLD } from "../src/state/foot_fsm.js";
-import { ButtonBit, type InputFrame } from "../src/input/types.js";
-import type { Intent } from "../src/input/intent.js";
+import { initialGameState, stepSimulation, type GameState } from "../../src/state/game_state.js";
+import { HAND_TIMING } from "../../src/state/hand_fsm.js";
+import { FOOT_TIMING, LOCKING_POSTURE_THRESHOLD } from "../../src/state/foot_fsm.js";
+import { ButtonBit, type InputFrame } from "../../src/input/types.js";
+import type { Intent } from "../../src/input/intent.js";
 
 const REACH_MID = (HAND_TIMING.reachMinMs + HAND_TIMING.reachMaxMs) / 2;
 

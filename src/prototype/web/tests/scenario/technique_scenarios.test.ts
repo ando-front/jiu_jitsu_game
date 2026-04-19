@@ -15,13 +15,13 @@ import {
   stepSimulation,
   type ActorState,
   type GameState,
-} from "../src/state/game_state.js";
-import type { InputFrame } from "../src/input/types.js";
-import type { GripZone, Intent } from "../src/input/intent.js";
-import type { HandFSM } from "../src/state/hand_fsm.js";
-import type { FootFSM } from "../src/state/foot_fsm.js";
-import { INITIAL_JUDGMENT_WINDOW } from "../src/state/judgment_window.js";
-import { INITIAL_ARM_EXTRACTED, type ArmExtractedState } from "../src/state/arm_extracted.js";
+} from "../../src/state/game_state.js";
+import type { InputFrame } from "../../src/input/types.js";
+import type { GripZone, Intent } from "../../src/input/intent.js";
+import type { HandFSM } from "../../src/state/hand_fsm.js";
+import type { FootFSM } from "../../src/state/foot_fsm.js";
+import { INITIAL_JUDGMENT_WINDOW } from "../../src/state/judgment_window.js";
+import { INITIAL_ARM_EXTRACTED, type ArmExtractedState } from "../../src/state/arm_extracted.js";
 
 // --- Builders --------------------------------------------------------------
 

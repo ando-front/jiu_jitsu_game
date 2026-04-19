@@ -8,10 +8,10 @@ import {
   advance,
   type FixedStepState,
   type StepProvider,
-} from "../src/sim/fixed_step.js";
-import { initialGameState } from "../src/state/game_state.js";
-import type { InputFrame } from "../src/input/types.js";
-import type { Intent } from "../src/input/intent.js";
+} from "../../src/sim/fixed_step.js";
+import { initialGameState } from "../../src/state/game_state.js";
+import type { InputFrame } from "../../src/input/types.js";
+import type { Intent } from "../../src/input/intent.js";
 
 function emptyFrame(timestamp: number): InputFrame {
   return Object.freeze({

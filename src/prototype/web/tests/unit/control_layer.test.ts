@@ -5,10 +5,10 @@ import {
   INITIAL_CONTROL_LAYER,
   updateControlLayer,
   type ControlLayerInputs,
-} from "../src/state/control_layer.js";
-import { INITIAL_JUDGMENT_WINDOW } from "../src/state/judgment_window.js";
-import { initialActorState, type ActorState } from "../src/state/game_state.js";
-import type { HandFSM } from "../src/state/hand_fsm.js";
+} from "../../src/state/control_layer.js";
+import { INITIAL_JUDGMENT_WINDOW } from "../../src/state/judgment_window.js";
+import { initialActorState, type ActorState } from "../../src/state/game_state.js";
+import type { HandFSM } from "../../src/state/hand_fsm.js";
 
 function gripped(side: "L" | "R"): HandFSM {
   return Object.freeze({

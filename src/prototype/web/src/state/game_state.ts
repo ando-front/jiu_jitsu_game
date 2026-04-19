@@ -57,6 +57,14 @@ import {
   updateControlLayer,
   type ControlLayer,
 } from "./control_layer.js";
+import {
+  INITIAL_COUNTER_WINDOW,
+  counterCandidatesFor,
+  tickCounterWindow,
+  type CounterTechnique,
+  type CounterTickEvent,
+  type CounterWindow,
+} from "./counter_window.js";
 import type { DefenseIntent } from "../input/intent_defense.js";
 
 export type Vec2 = Readonly<{ x: number; y: number }>;
@@ -114,6 +122,11 @@ export type GameState = Readonly<{
   top: ActorState;
   guard: GuardState;
   judgmentWindow: JudgmentWindow;
+  counterWindow: CounterWindow;
+  // §D.2 — sign snapshot of the attacker's lateral hip input captured at
+  // attacker-window OPENING. Used by Layer D_defense to resolve
+  // SCISSOR_COUNTER (which needs "opposite direction").
+  attackerSweepLateralSign: number;
   time: TimeContext;
   sustained: SustainedCounters;
   topArmExtracted: ArmExtractedState;
@@ -128,6 +141,8 @@ export function initialGameState(nowMs: number = 0): GameState {
     top: initialActorState(nowMs),
     guard: "CLOSED" as const,
     judgmentWindow: INITIAL_JUDGMENT_WINDOW,
+    counterWindow: INITIAL_COUNTER_WINDOW,
+    attackerSweepLateralSign: 0,
     time: INITIAL_TIME_CONTEXT,
     sustained: INITIAL_SUSTAINED,
     topArmExtracted: INITIAL_ARM_EXTRACTED,
@@ -141,6 +156,7 @@ export type SimEvent =
   | HandTickEvent
   | FootTickEvent
   | JudgmentTickEvent
+  | CounterTickEvent
   | { kind: "GUARD_OPENED" };
 
 export type StepOptions = Readonly<{
@@ -151,6 +167,8 @@ export type StepOptions = Readonly<{
   // a real DefenseIntent activates recovery pressure, base holds, and the
   // defender-base-hold flag feeding arm_extracted's clear clause.
   defenseIntent?: DefenseIntent | null;
+  // §D.2 — defender counter commit resolved by Layer D_defense.
+  confirmedCounter?: CounterTechnique | null;
 }>;
 
 export function stepSimulation(
@@ -261,34 +279,108 @@ export function stepSimulation(
   );
   for (const e of winResult.events) events.push(e);
 
+  // 7b. Counter window (§D of input_system_defense_v1.md).
+  // Seed OPENING only on the frame attacker transitions to OPENING (same
+  // frame). We detect that via the WINDOW_OPENING event we just pushed.
+  const attackerOpeningThisTick = winResult.events.find(
+    (e): e is Extract<JudgmentTickEvent, { kind: "WINDOW_OPENING" }> =>
+      e.kind === "WINDOW_OPENING",
+  );
+  const openingSeed = attackerOpeningThisTick
+    ? counterCandidatesFor(attackerOpeningThisTick.candidates)
+    : [];
+  const attackerWindowActive =
+    winResult.next.state === "OPENING" || winResult.next.state === "OPEN";
+
+  const counterResult = tickCounterWindow(prev.counterWindow, {
+    nowMs,
+    openAttackerWindow: attackerWindowActive,
+    openingSeed,
+    confirmedCounter: opts.confirmedCounter ?? null,
+    dismissRequested,
+  });
+  for (const e of counterResult.events) events.push(e);
+
+  // Snapshot the attacker's lateral hip sign at attacker OPENING so
+  // Layer D_defense can evaluate SCISSOR_COUNTER this tick.
+  const attackerSweepLateralSign = attackerOpeningThisTick
+    ? (intent.hip.hip_lateral > 0 ? 1 : intent.hip.hip_lateral < 0 ? -1 : 0)
+    : prev.attackerSweepLateralSign;
+
+  // Counter success side-effects (§D.2).
+  let finalJudgmentWindow = winResult.next;
+  let armExtractedAfterCounter = nextArmExtracted;
+  const counterConfirmed = counterResult.events.find(
+    (e): e is Extract<CounterTickEvent, { kind: "COUNTER_CONFIRMED" }> =>
+      e.kind === "COUNTER_CONFIRMED",
+  );
+  if (counterConfirmed) {
+    // Force the attacker's window into CLOSING — the attack is disrupted.
+    // We mirror the enterClosing shape used inside tickJudgmentWindow,
+    // including freshing the cooldownUntilMs when it reaches CLOSED on a
+    // later tick. Here we just flip the state flag; its own FSM will
+    // drive the rest of the lifecycle.
+    if (finalJudgmentWindow.state === "OPEN" || finalJudgmentWindow.state === "OPENING") {
+      finalJudgmentWindow = Object.freeze({
+        ...finalJudgmentWindow,
+        state: "CLOSING" as const,
+        stateEnteredMs: nowMs,
+      });
+    }
+    if (counterConfirmed.counter === "TRIANGLE_EARLY_STACK") {
+      // §D.2 — triangle counter resets arm_extracted both sides to false.
+      armExtractedAfterCounter = Object.freeze({
+        ...nextArmExtracted,
+        left: false,
+        right: false,
+        leftSustainMs: 0,
+        rightSustainMs: 0,
+        leftSetAtMs: Number.NEGATIVE_INFINITY,
+        rightSetAtMs: Number.NEGATIVE_INFINITY,
+      });
+    }
+  }
+
   // 5.2 last row — confirming a technique deducts a flat stamina cost.
   const confirmedThisTick = winResult.events.some((e) => e.kind === "TECHNIQUE_CONFIRMED");
   const bottomAfterConfirm: ActorState = confirmedThisTick
     ? Object.freeze({ ...nextBottom, stamina: applyConfirmCost(nextBottom.stamina) })
     : nextBottom;
 
+  // Rebuild top with possibly-cleared arm_extracted after counter.
+  const topAfterCounter: ActorState = Object.freeze({
+    ...nextTop,
+    armExtractedLeft: armExtractedAfterCounter.left,
+    armExtractedRight: armExtractedAfterCounter.right,
+  });
+
+  // Time scale: if either window is producing slow-mo, pick the most
+  // aggressive (lowest) scale, per §D.3 "slow-mo doesn't double up".
+  const combinedScale = Math.min(winResult.timeScale, counterResult.timeScale);
   const nextTime: TimeContext = Object.freeze({
-    scale: winResult.timeScale,
+    scale: combinedScale,
     realDtMs: opts.realDtMs,
     gameDtMs: opts.gameDtMs,
   });
 
   // 8. ControlLayer (presentation-only, see §7.3).
   const nextControl = updateControlLayer(prev.control, {
-    judgmentWindow: winResult.next,
+    judgmentWindow: finalJudgmentWindow,
     bottom: bottomAfterConfirm,
-    top: nextTop,
+    top: topAfterCounter,
     defenderCutInProgress: false,
   });
 
   const nextState: GameState = Object.freeze({
     bottom: bottomAfterConfirm,
-    top: nextTop,
+    top: topAfterCounter,
     guard: nextGuard,
-    judgmentWindow: winResult.next,
+    judgmentWindow: finalJudgmentWindow,
+    counterWindow: counterResult.next,
+    attackerSweepLateralSign,
     time: nextTime,
     sustained: nextSustained,
-    topArmExtracted: nextArmExtracted,
+    topArmExtracted: armExtractedAfterCounter,
     control: nextControl,
     frameIndex: prev.frameIndex + 1,
     nowMs,

@@ -8,7 +8,7 @@ import {
   tickHand,
   type HandFSM,
   type HandTickInput,
-} from "../src/state/hand_fsm.js";
+} from "../../src/state/hand_fsm.js";
 
 // Midpoint of §C.1.2's 200–350ms reach window; matches the FSM default.
 const REACH_MID = (HAND_TIMING.reachMinMs + HAND_TIMING.reachMaxMs) / 2; // 275

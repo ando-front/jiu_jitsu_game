@@ -16,11 +16,11 @@ import {
   triangleConditions,
   type JudgmentContext,
   type Technique,
-} from "../src/state/judgment_window.js";
-import { initialActorState, type ActorState } from "../src/state/game_state.js";
-import type { HandFSM } from "../src/state/hand_fsm.js";
-import type { FootFSM } from "../src/state/foot_fsm.js";
-import type { GripZone } from "../src/input/intent.js";
+} from "../../src/state/judgment_window.js";
+import { initialActorState, type ActorState } from "../../src/state/game_state.js";
+import type { HandFSM } from "../../src/state/hand_fsm.js";
+import type { FootFSM } from "../../src/state/foot_fsm.js";
+import type { GripZone } from "../../src/input/intent.js";
 
 // Helpers to synthesise actor states for predicate testing without routing
 // through the full FSM machinery.

@@ -8,9 +8,9 @@ import {
   gripStrengthCeiling,
   updateStamina,
   type StaminaInputs,
-} from "../src/state/stamina.js";
-import { initialActorState, type ActorState } from "../src/state/game_state.js";
-import type { HandFSM } from "../src/state/hand_fsm.js";
+} from "../../src/state/stamina.js";
+import { initialActorState, type ActorState } from "../../src/state/game_state.js";
+import type { HandFSM } from "../../src/state/hand_fsm.js";
 
 function gripped(side: "L" | "R"): HandFSM {
   return Object.freeze({

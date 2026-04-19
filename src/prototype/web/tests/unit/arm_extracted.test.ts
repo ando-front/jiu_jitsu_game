@@ -7,9 +7,9 @@ import {
   updateArmExtracted,
   type ArmExtractedInputs,
   type ArmExtractedState,
-} from "../src/state/arm_extracted.js";
-import type { HandFSM } from "../src/state/hand_fsm.js";
-import type { GripZone } from "../src/input/intent.js";
+} from "../../src/state/arm_extracted.js";
+import type { HandFSM } from "../../src/state/hand_fsm.js";
+import type { GripZone } from "../../src/input/intent.js";
 
 function grippedAt(zone: GripZone, side: "L" | "R"): HandFSM {
   return Object.freeze({

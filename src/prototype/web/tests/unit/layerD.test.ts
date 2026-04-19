@@ -7,10 +7,10 @@ import {
   resolveLayerD,
   type LayerDInputs,
   type LayerDState,
-} from "../src/input/layerD.js";
-import { ButtonBit, type InputFrame } from "../src/input/types.js";
-import type { HipIntent } from "../src/input/intent.js";
-import type { Technique } from "../src/state/judgment_window.js";
+} from "../../src/input/layerD.js";
+import { ButtonBit, type InputFrame } from "../../src/input/types.js";
+import type { HipIntent } from "../../src/input/intent.js";
+import type { Technique } from "../../src/state/judgment_window.js";
 
 function frame(over: {
   timestamp?: number;

@@ -1,7 +1,11 @@
-// PLATFORM — minimal Three.js scene: bottom actor (player) + top actor
-// (opponent) + ground + vignette overlay for the judgment window. Visuals
-// are intentionally placeholder; the scene exists to give Stage 1 a
-// feedback surface so state flows can be verified end-to-end.
+// PLATFORM — Three.js scene for Stage 1. Renders two blockmen + ground,
+// an overlay vignette for judgment windows, and transient event pulses
+// (flash / shake / tint) triggered by SimEvents.
+//
+// The Stage 1 visual vocabulary is intentionally narrow: placeholder
+// geometry, placeholder colours. What matters is that every gameplay
+// event has a perceptible cue, so logic regressions are obvious during
+// manual testing.
 
 import * as THREE from "three";
 
@@ -11,10 +15,13 @@ export interface Scene3D {
   camera: THREE.PerspectiveCamera;
   bottom: BlockmanRig;
   top: BlockmanRig;
-  // Tint applied to the whole scene when the judgment window is active.
   setWindowTint(strength: number): void;
-  // Initiative cue: shifts camera position and overall saturation.
   setInitiative(tint: InitiativeTint): void;
+  // Transient pulses triggered by sim events. The caller fires-and-forgets
+  // these; the scene owns the decay animation.
+  pulseFlash(color: THREE.ColorRepresentation, durationMs?: number): void;
+  pulseShake(rig: "bottom" | "top", amplitude?: number, durationMs?: number): void;
+  updatePulses(realDtMs: number): void;
   resize(w: number, h: number): void;
   render(): void;
 }
@@ -24,8 +31,6 @@ export type InitiativeTint = "Bottom" | "Top" | "Neutral";
 export interface BlockmanRig {
   root: THREE.Group;
   body: THREE.Mesh;
-  // Per-actor tint base — derived from posture_break bucket when this rig
-  // is the opponent; the player rig keeps a fixed colour in Stage 1.
   setBreakBucket(bucket: number): void;
 }
 
@@ -54,21 +59,16 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
   ground.rotation.x = -Math.PI / 2;
   scene.add(ground);
 
-  // Player (bottom) rig — blue team.
   const bottom = buildBlockman(new THREE.Color(0x5a8cff));
   bottom.root.position.set(0, 0, 0);
   scene.add(bottom.root);
 
-  // Opponent (top) rig — neutral beige, tints to warm on posture break.
   const top = buildBlockman(new THREE.Color(0xc9b48a));
   top.root.position.set(0, 0, -1.1);
-  // Opponent sits on top of player in closed guard; rotate 180 and raise
-  // slightly so the blockman appears "kneeling".
   top.root.rotation.y = Math.PI;
   scene.add(top.root);
 
-  // Full-screen quad for the judgment window vignette. Separate scene so
-  // it always renders on top without depth writes.
+  // --- Vignette overlay ---
   const overlayScene = new THREE.Scene();
   const overlayCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   const overlayMaterial = new THREE.ShaderMaterial({
@@ -76,8 +76,10 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
     depthTest: false,
     depthWrite: false,
     uniforms: {
-      uStrength: { value: 0 },
-      uColor: { value: new THREE.Color(0xfff2d0) },
+      uWindowStrength: { value: 0 },
+      uFlashStrength: { value: 0 },
+      uFlashColor: { value: new THREE.Color(0xffffff) },
+      uVignetteColor: { value: new THREE.Color(0xfff2d0) },
     },
     vertexShader: /* glsl */ `
       varying vec2 vUv;
@@ -88,16 +90,19 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
     `,
     fragmentShader: /* glsl */ `
       varying vec2 vUv;
-      uniform float uStrength;
-      uniform vec3 uColor;
+      uniform float uWindowStrength;
+      uniform float uFlashStrength;
+      uniform vec3  uFlashColor;
+      uniform vec3  uVignetteColor;
       void main() {
         vec2 c = vUv - 0.5;
         float r = length(c);
-        // Vignette + warm wash. Stronger radial falloff outside 0.35.
-        float vignette = smoothstep(0.35, 0.8, r) * uStrength;
-        float wash = uStrength * 0.15;
-        vec3 rgb = mix(vec3(0.0), uColor, wash);
-        gl_FragColor = vec4(rgb, vignette);
+        float vignette = smoothstep(0.35, 0.8, r) * uWindowStrength;
+        float wash = uWindowStrength * 0.15 + uFlashStrength * 0.6;
+        vec3 rgb = mix(vec3(0.0), uVignetteColor, uWindowStrength * 0.25);
+        rgb = mix(rgb, uFlashColor, uFlashStrength);
+        float alpha = max(vignette, uFlashStrength);
+        gl_FragColor = vec4(rgb, alpha);
       }
     `,
   });
@@ -107,9 +112,17 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
   );
   overlayScene.add(overlayQuad);
 
-  // Ambient saturation cue via a subtle hemisphere-light colour shift.
   const initiativeLight = new THREE.HemisphereLight(0xffffff, 0x0, 0.2);
   scene.add(initiativeLight);
+
+  // --- Transient pulses ---
+  // Flash: uniform on the overlay. Decays linearly over `durationMs`.
+  type Flash = { remainingMs: number; totalMs: number; color: THREE.Color };
+  let activeFlash: Flash | null = null;
+
+  // Shake: randomised per-frame offset on a rig root, decays exponentially.
+  type Shake = { remainingMs: number; totalMs: number; amplitude: number; rig: "bottom" | "top" };
+  const shakes: Shake[] = [];
 
   return {
     renderer,
@@ -118,20 +131,59 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
     bottom,
     top,
     setWindowTint(strength: number) {
-      overlayMaterial.uniforms.uStrength!.value = Math.max(0, Math.min(1, strength));
+      overlayMaterial.uniforms.uWindowStrength!.value = Math.max(0, Math.min(1, strength));
     },
     setInitiative(tint: InitiativeTint) {
-      // Camera z nudges slightly forward on "Bottom" (attacker view) and
-      // back on "Top" (defender view). Matches §7.3 design note.
       const baseZ = 2.6;
       const dz = tint === "Bottom" ? -0.2 : tint === "Top" ? 0.2 : 0;
       camera.position.z = baseZ + dz;
-      // Hemisphere top-colour nudges slightly warm on Bottom, cool on Top.
       const warm = 0xffe8c4;
       const cool = 0xbfd4ff;
       const neutral = 0xffffff;
       const hex = tint === "Bottom" ? warm : tint === "Top" ? cool : neutral;
       initiativeLight.color.setHex(hex);
+    },
+    pulseFlash(color, durationMs = 180) {
+      activeFlash = {
+        remainingMs: durationMs,
+        totalMs: durationMs,
+        color: new THREE.Color(color),
+      };
+    },
+    pulseShake(rig, amplitude = 0.08, durationMs = 200) {
+      shakes.push({ remainingMs: durationMs, totalMs: durationMs, amplitude, rig });
+    },
+    updatePulses(realDtMs: number) {
+      // Flash decay.
+      if (activeFlash !== null) {
+        activeFlash.remainingMs -= realDtMs;
+        if (activeFlash.remainingMs <= 0) {
+          overlayMaterial.uniforms.uFlashStrength!.value = 0;
+          activeFlash = null;
+        } else {
+          const t = activeFlash.remainingMs / activeFlash.totalMs;
+          overlayMaterial.uniforms.uFlashStrength!.value = t;
+          overlayMaterial.uniforms.uFlashColor!.value.copy(activeFlash.color);
+        }
+      }
+
+      // Shake — we overwrite each rig's base position offset every frame
+      // with the current total shake vector. The caller's scene-apply
+      // step sets the "base" position first; our shake offset is added
+      // on top via a small extra group in the future. For Stage 1 we
+      // just nudge the rig's root.position by a randomised delta.
+      for (let i = shakes.length - 1; i >= 0; i -= 1) {
+        const s = shakes[i]!;
+        s.remainingMs -= realDtMs;
+        if (s.remainingMs <= 0) {
+          shakes.splice(i, 1);
+          continue;
+        }
+        const t = s.remainingMs / s.totalMs;
+        const rig = s.rig === "bottom" ? bottom : top;
+        rig.root.position.x += (Math.random() - 0.5) * s.amplitude * t;
+        rig.root.position.y += (Math.random() - 0.5) * s.amplitude * t * 0.3;
+      }
     },
     resize(w, h) {
       renderer.setSize(w, h, false);
@@ -176,8 +228,6 @@ function buildBlockman(baseColor: THREE.Color): BlockmanRig {
   legR.position.x = 0.13;
   root.add(legR);
 
-  // Break-bucket tint: bucket 0 = base colour, bucket 4 = heavily warm-shifted
-  // and desaturated — a "this opponent is getting dumped" visual.
   const breakTints: readonly THREE.Color[] = [
     baseColor.clone(),
     baseColor.clone().lerp(new THREE.Color(0xe9c878), 0.2),
