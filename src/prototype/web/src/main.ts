@@ -18,7 +18,7 @@ import { LayerA } from "./input/layerA.js";
 import { ButtonBit, type InputFrame } from "./input/types.js";
 import type { DiscreteIntent, Intent } from "./input/intent.js";
 import { ZERO_DEFENSE_INTENT, type DefenseIntent } from "./input/intent_defense.js";
-import { initialGameState, type GameState } from "./state/game_state.js";
+import { initialGameState, type GameState, type SimEvent } from "./state/game_state.js";
 import { breakBucket } from "./state/posture_break.js";
 import { advance, FIXED_STEP_MS, type FixedStepState } from "./sim/fixed_step.js";
 import { createScene } from "./scene/blockman.js";
@@ -27,6 +27,7 @@ type Role = "Bottom" | "Top";
 
 const canvas = document.getElementById("three-canvas") as HTMLCanvasElement;
 const hud = document.getElementById("debug-hud") as HTMLPreElement;
+const eventLogListEl = document.getElementById("event-log-list") as HTMLUListElement;
 
 // -- Role prompt --------------------------------------------------------------
 // Per defense doc §F: one-shot full-screen text on boot, dismissed with A (BTN_BASE).
@@ -132,6 +133,93 @@ let lastFrame: InputFrame | null = null;
 // resolveCommit / resolveCounterCommit read it so we don't recompute the
 // AI twice per step.
 let pendingAi: AIOutput | null = null;
+
+// -- Event log ---------------------------------------------------------------
+// Rolling buffer of the last N sim events so transient outcomes
+// (PARRIED / WINDOW_OPENING / TECHNIQUE_CONFIRMED / CUT_*) stay visible
+// after their pulse fades. Not every event is logged — foot FSM pings
+// and WINDOW_OPEN/CLOSED get filtered because they're spammy and the
+// already-shown WINDOW_OPENING event conveys the interesting edge.
+
+const EVENT_LOG_LIMIT = 12;
+type LoggedEvent = { nowMs: number; ev: SimEvent };
+const eventLog: LoggedEvent[] = [];
+const SUPPRESSED_EVENT_KINDS: ReadonlySet<string> = new Set([
+  "WINDOW_OPEN",
+  "WINDOW_CLOSED",
+  "COUNTER_WINDOW_OPEN",
+  "COUNTER_WINDOW_CLOSED",
+  "LOCKING_STARTED",
+]);
+
+function pushEvent(ev: SimEvent, nowMs: number): void {
+  if (SUPPRESSED_EVENT_KINDS.has(ev.kind)) return;
+  eventLog.unshift({ nowMs, ev });
+  if (eventLog.length > EVENT_LOG_LIMIT) eventLog.length = EVENT_LOG_LIMIT;
+}
+
+function formatEvent(ev: SimEvent): { args: string } {
+  // Args are the event-specific extras (side / zone / reason / etc.).
+  // Kept as a single short string so the log line stays on one row.
+  switch (ev.kind) {
+    case "REACH_STARTED":
+    case "CONTACT":
+    case "GRIPPED":
+    case "PARRIED":
+      return { args: `${ev.side} ${ev.zone}` };
+    case "GRIP_BROKEN":
+      return { args: `${ev.side} ${ev.zone} (${ev.reason})` };
+    case "UNLOCKED":
+    case "LOCK_SUCCEEDED":
+    case "LOCK_FAILED":
+      return { args: ev.side };
+    case "WINDOW_OPENING":
+      return { args: `${ev.firedBy} ${ev.candidates.join(",")}` };
+    case "WINDOW_CLOSING":
+      return { args: ev.reason };
+    case "TECHNIQUE_CONFIRMED":
+      return { args: ev.technique };
+    case "COUNTER_WINDOW_OPENING":
+      return { args: ev.candidates.join(",") };
+    case "COUNTER_WINDOW_CLOSING":
+      return { args: ev.reason };
+    case "COUNTER_CONFIRMED":
+      return { args: ev.counter };
+    case "CUT_STARTED":
+      return { args: `def=${ev.defender} → atk=${ev.attackerSide} ${ev.zone}` };
+    case "CUT_SUCCEEDED":
+      return { args: `def=${ev.defender} → atk=${ev.attackerSide}` };
+    case "CUT_FAILED":
+      return { args: `def=${ev.defender}` };
+    case "SESSION_ENDED":
+      return { args: ev.reason };
+    default:
+      return { args: "" };
+  }
+}
+
+function renderEventLog(nowMs: number): void {
+  const parts: string[] = [];
+  for (const entry of eventLog) {
+    const ageSec = Math.max(0, (nowMs - entry.nowMs) / 1000);
+    const ageTxt = ageSec < 10 ? ageSec.toFixed(1) : ageSec.toFixed(0);
+    const { args } = formatEvent(entry.ev);
+    parts.push(
+      `<li><span class="t">-${ageTxt}s</span>` +
+      `<span class="k${entry.ev.kind}">${entry.ev.kind}</span>` +
+      (args ? ` <span class="args">${escapeHtml(args)}</span>` : "") +
+      `</li>`,
+    );
+  }
+  eventLogListEl.innerHTML = parts.join("");
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
 // Reason last SESSION_ENDED pulse carried, so the restart overlay can
 // label the outcome. null when the session is still live.
 type SessionEndReason = "PASS_SUCCESS" | "TECHNIQUE_FINISHED" | "GUARD_OPENED";
@@ -178,6 +266,7 @@ function restartSession() {
   pendingAi = null;
   lastIntent = null;
   lastDefense = null;
+  eventLog.length = 0;
   lastRafMs = performance.now();
   simState = Object.freeze({
     accumulatorMs: 0,
@@ -207,7 +296,8 @@ function frame(now: number) {
 
   // Session-ended: stop the fixed-step loop but keep polling input so
   // the player can restart. Scene pulses still drain so the confirm
-  // flash doesn't freeze mid-fade.
+  // flash doesn't freeze mid-fade, and the event log keeps ticking so
+  // the last events' age counters advance instead of freezing.
   if (sessionEndReason !== null) {
     scene3d.updatePulses(realDt);
     const f = layerA.sample(performance.now());
@@ -215,6 +305,7 @@ function frame(now: number) {
     if ((f.button_edges & ButtonBit.BTN_BASE) !== 0) {
       restartSession();
     }
+    renderEventLog(simState.game.nowMs);
     scene3d.render();
     requestAnimationFrame(frame);
     return;
@@ -286,8 +377,9 @@ function frame(now: number) {
   });
   simState = res.next;
 
-  // Map SimEvents to scene pulses before rendering.
+  // Map SimEvents to scene pulses and the rolling event log.
   for (const ev of res.events) {
+    pushEvent(ev, simState.game.nowMs);
     switch (ev.kind) {
       case "GRIPPED":
         scene3d.pulseShake("top", 0.04, 120);
@@ -334,6 +426,7 @@ function frame(now: number) {
   if (lastFrame !== null && lastIntent !== null) {
     hud.textContent = renderHud(lastFrame, lastIntent, game, res.stepsRun);
   }
+  renderEventLog(game.nowMs);
   scene3d.render();
   requestAnimationFrame(frame);
 }
