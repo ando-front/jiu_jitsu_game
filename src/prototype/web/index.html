@@ -311,6 +311,19 @@
         <ul id="event-log-list"></ul>
       </div>
 
+      <div id="pause-overlay" role="dialog" aria-modal="true"
+           style="position:absolute; inset:0; display:none; align-items:center;
+                  justify-content:center; gap:14px; flex-direction:column;
+                  background:rgba(8,8,12,0.82); color:#e6e6ea; z-index:55;
+                  font-family:ui-monospace, Menlo, Consolas, monospace;
+                  text-align:center; padding:24px;">
+        <div style="font-size:15px; letter-spacing:0.2em; opacity:0.65;">PAUSED</div>
+        <div style="font-size:32px; font-weight:600;">一時停止中</div>
+        <div style="font-size:12px; opacity:0.55;">
+          <b>Esc</b> または <b>Options</b> ボタンで再開
+        </div>
+      </div>
+
       <button id="tutorial-toggle" type="button">? チュートリアル [H]</button>
 
       <div id="tutorial" role="dialog" aria-modal="true" aria-labelledby="tutorial-title">
@@ -357,7 +370,9 @@
             <tr><td class="k">C</td><td class="p">Y / △</td><td>呼吸(スタミナ回復)</td></tr>
             <tr><td class="k">V</td><td class="p">X / □</td><td>TOP:パスコミット/BOTTOM:未使用</td></tr>
             <tr><td class="k">H</td><td class="p">-</td><td>このチュートリアルを開閉</td></tr>
-            <tr><td class="k">Esc</td><td class="p">Options</td><td>ポーズ(未実装)</td></tr>
+            <tr><td class="k">Esc</td><td class="p">Options</td><td>一時停止 / 再開</td></tr>
+            <tr><td class="k">1–7</td><td class="p">-</td><td>練習シナリオ読込(§12)</td></tr>
+            <tr><td class="k">0</td><td class="p">-</td><td>シナリオなしでリセット</td></tr>
           </table>
 
           <h3>BOTTOM(攻め)の意図</h3>
@@ -514,7 +529,33 @@
           </ul>
           <p>終了後、画面に結果が表示され、<b>A / Space</b> でセッションをリスタートできます。</p>
 
-          <h2>11. 練習シナリオ(デバッグ用)</h2>
+          <h2>11. ラウンドタイマー・一時停止・カラーグレーディング</h2>
+          <h3>ラウンドタイマー</h3>
+          <p>
+            ラウンドは <b>5 分</b> の制限時間があり、左上HUDに <code>round m:ss</code> 形式でカウントダウンが出ます(IBJJFアダルト白帯/青帯のマッチ長に整合)。
+            タイマーが 0 になると <code>TIME UP — ROUND OVER</code> が表示され、セッション終了扱いになります。
+            <b>A / Space</b> で再開。
+          </p>
+
+          <h3>一時停止</h3>
+          <p>
+            <b>Esc</b>(または <b>Options</b> ボタン)でシムを一時停止できます。もう一度押すと再開。
+            チュートリアルを開いている間もシムは止まりますが、こちらは「じっくり考えたいとき」用の明示的なポーズです。
+          </p>
+
+          <h3>スタミナのカラーグレーディング(§5.4)</h3>
+          <p>
+            <b>プレイヤー側のスタミナが消耗する</b>と、画面の縁がじわりと暖色(オレンジ)に寄り、呼吸の重さが視覚的に伝わります。
+            Stage 2 (UE5) で目指す <b>HUDなしの状態伝達</b> の縮小版で、Stage 1 では暖色シフトだけに絞っています。
+          </p>
+          <ul>
+            <li>BOTTOM ロールでは <code>bottom.stamina</code> を見る</li>
+            <li>TOP ロールでは <code>top.stamina</code> を見る</li>
+            <li>SPECTATE では両側の min(より消耗しているほう)を見る</li>
+          </ul>
+          <p>0.6 付近から緩やかに色が乗り始め、0.15 以下でフル暖色になります。</p>
+
+          <h2>12. 練習シナリオ(デバッグ用)</h2>
           <p>
             開発/検証用に、特定の技が出せる直前の状態を即座にロードできます。
             ゲーム中に数字キーを押すと切り替わります。
@@ -527,9 +568,13 @@
               <td>両足 LOCKED + 右手 WRIST_L GRIPPED + 前崩し 0.6。次フレームで FLOWER_SWEEP 条件成立。</td></tr>
             <tr><td class="k">3</td><td><b>TRIANGLE_READY</b></td>
               <td>左足 UNLOCKED + 左手 COLLAR_R GRIPPED + top.armExtractedRight=true。TRIANGLE 条件成立済み。</td></tr>
-            <tr><td class="k">4</td><td><b>CROSS_COLLAR_READY</b></td>
+            <tr><td class="k">4</td><td><b>OMOPLATA_READY</b></td>
+              <td>左手 SLEEVE_R GRIPPED + 前崩し 0.7 + 横崩し -0.4(符号一致)。L-Stick を左に倒して腰を π/3 以上ひねると OMOPLATA 窓が開く。</td></tr>
+            <tr><td class="k">5</td><td><b>HIP_BUMP_READY</b></td>
+              <td>前崩し 0.8 + sustainedHipPushMs=350ms(300ms 閾値突破済)。L-Stick 前 + 押し続けで即 HIP_BUMP。</td></tr>
+            <tr><td class="k">6</td><td><b>CROSS_COLLAR_READY</b></td>
               <td>両 COLLAR GRIPPED + 崩し 0.5+。両トリガーを最大で十字絞め判断窓に乗る。</td></tr>
-            <tr><td class="k">5</td><td><b>PASS_DEFENSE</b></td>
+            <tr><td class="k">7</td><td><b>PASS_DEFENSE</b></td>
               <td>TOP視点の防御練習。BOTTOM片足 UNLOCKED、スタミナ消耗気味でパスが決まる一歩手前。</td></tr>
             <tr><td class="k">0</td><td><b>(reset)</b></td><td>ニュートラル状態に戻す。シナリオなしの対戦へ。</td></tr>
           </table>
@@ -538,7 +583,7 @@
             技の発火条件にバグが疑われたとき、対応するシナリオをロードしてすぐ再現できます。
           </p>
 
-          <h2>12. 画面UIの読み方</h2>
+          <h2>13. 画面UIの読み方</h2>
           <ul>
             <li><b>左上のHUD</b> — Layer A / Layer B / ActorState / GameStateを文字で表示する開発用ダッシュボード。数値で挙動を確かめられる。</li>
             <li><b>右上のLegend</b> — キー割り当て一覧。</li>
@@ -556,7 +601,7 @@
             <li><b>画面色</b> — 黄パルス=判断窓、水色パルス=カウンター窓、赤フラッシュ=ガード開け。</li>
           </ul>
 
-          <h2>13. 上達のヒント</h2>
+          <h2>14. 上達のヒント</h2>
           <ol>
             <li><b>最初は軽い崩し + 1グリップから</b>。いきなり両グリップを狙うと弾かれて短期記憶で取れなくなります。</li>
             <li><b>崩しは消える</b>ので、グリップと腰入力をセットで維持すること。</li>

@@ -31,6 +31,8 @@ export type ScenarioName =
   | "SCISSOR_READY"
   | "FLOWER_READY"
   | "TRIANGLE_READY"
+  | "OMOPLATA_READY"
+  | "HIP_BUMP_READY"
   | "CROSS_COLLAR_READY"
   | "PASS_DEFENSE";
 
@@ -38,6 +40,8 @@ export const SCENARIO_ORDER: readonly ScenarioName[] = [
   "SCISSOR_READY",
   "FLOWER_READY",
   "TRIANGLE_READY",
+  "OMOPLATA_READY",
+  "HIP_BUMP_READY",
   "CROSS_COLLAR_READY",
   "PASS_DEFENSE",
 ] as const;
@@ -52,6 +56,12 @@ export const SCENARIO_DESCRIPTIONS: Readonly<Record<ScenarioName, string>> = Obj
   TRIANGLE_READY:
     "L-foot UNLOCKED + L-hand GRIPPED(COLLAR_R)+ top.armExtractedRight=true。" +
     "TRIANGLE 条件成立。",
+  OMOPLATA_READY:
+    "L-hand GRIPPED(SLEEVE_R)+ 前崩し 0.7 + 横 -0.4(符号一致)。" +
+    "L-Stick を左に大きく倒して腰をひねる(|hip_yaw| ≥ π/3)と OMOPLATA 窓が開く。",
+  HIP_BUMP_READY:
+    "前崩し 0.8 + sustainedHipPushMs=350ms(300ms 閾値突破済)。" +
+    "押し続けるだけで HIP_BUMP 条件成立。",
   CROSS_COLLAR_READY:
     "両 COLLAR GRIPPED 強度0.7+ + 崩し 0.5+。十字絞め判断窓候補に乗る。",
   PASS_DEFENSE:
@@ -99,6 +109,10 @@ export function buildScenario(name: ScenarioName, nowMs: number): GameState {
       return flowerReady(base, nowMs);
     case "TRIANGLE_READY":
       return triangleReady(base, nowMs);
+    case "OMOPLATA_READY":
+      return omoplataReady(base, nowMs);
+    case "HIP_BUMP_READY":
+      return hipBumpReady(base, nowMs);
     case "CROSS_COLLAR_READY":
       return crossCollarReady(base, nowMs);
     case "PASS_DEFENSE":
@@ -160,6 +174,40 @@ function triangleReady(g: GameState, nowMs: number): GameState {
     rightSetAtMs: nowMs,
   });
   return Object.freeze({ ...g, bottom, top, topArmExtracted });
+}
+
+function omoplataReady(g: GameState, nowMs: number): GameState {
+  const bottom: ActorState = Object.freeze({
+    ...g.bottom,
+    // Left-hand sleeve grip on right sleeve — "sign一致" wants
+    // postureBreak.x < 0 (matches L=-1) per §8.2.
+    leftHand: grippedHand("L", "SLEEVE_R", nowMs),
+    leftFoot: foot("L", "LOCKED", nowMs),
+    rightFoot: foot("R", "LOCKED", nowMs),
+  });
+  const top: ActorState = Object.freeze({
+    ...g.top,
+    // §8.2 OMOPLATA: sagittal ≥ 0.6, lateral sign matches sleeve side.
+    postureBreak: postureBreak(-0.4, 0.7),
+  });
+  return Object.freeze({ ...g, bottom, top });
+}
+
+function hipBumpReady(g: GameState, nowMs: number): GameState {
+  const bottom: ActorState = Object.freeze({
+    ...g.bottom,
+    leftFoot: foot("L", "LOCKED", nowMs),
+    rightFoot: foot("R", "LOCKED", nowMs),
+  });
+  const top: ActorState = Object.freeze({
+    ...g.top,
+    // §8.2 HIP_BUMP needs sagittal ≥ 0.7.
+    postureBreak: postureBreak(0, 0.8),
+  });
+  // HIP_BUMP also needs sustained hip_push ≥ 300ms (§D.1.1). Seed past
+  // the threshold so holding the stick forward immediately satisfies it.
+  const sustained = Object.freeze({ ...g.sustained, hipPushMs: 350 });
+  return Object.freeze({ ...g, bottom, top, sustained });
 }
 
 function crossCollarReady(g: GameState, nowMs: number): GameState {

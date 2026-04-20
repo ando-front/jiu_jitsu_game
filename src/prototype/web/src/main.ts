@@ -258,12 +258,42 @@ function escapeHtml(s: string): string {
 }
 // Reason last SESSION_ENDED pulse carried, so the restart overlay can
 // label the outcome. null when the session is still live.
-type SessionEndReason = "PASS_SUCCESS" | "TECHNIQUE_FINISHED" | "GUARD_OPENED";
+type SessionEndReason =
+  | "PASS_SUCCESS"
+  | "TECHNIQUE_FINISHED"
+  | "GUARD_OPENED"
+  | "ROUND_TIME_UP";
 let sessionEndReason: SessionEndReason | null = null;
 // Wall-clock accumulator since the end overlay appeared, used to
 // auto-restart while spectating. Reset on show/hide.
 let sessionEndElapsedMs = 0;
 const SPECTATE_AUTO_RESTART_MS = 2000;
+
+// -- Pause state -------------------------------------------------------------
+// BTN_PAUSE (Esc / Options) toggles the pause overlay. While paused, the
+// fixed-step loop is halted and the Pause DOM overlay is visible.
+const pauseEl = document.getElementById("pause-overlay") as HTMLElement;
+let paused = false;
+
+function setPaused(next: boolean) {
+  paused = next;
+  pauseEl.style.display = next ? "flex" : "none";
+}
+
+// -- Round timer -------------------------------------------------------------
+// Drives a visible countdown and triggers SESSION_ENDED("ROUND_TIME_UP") when
+// it hits zero. Matches IBJJF adult white/blue-belt match length (5 min).
+// Timer runs on GameState.time.gameDtMs (slow-mo-aware) so the judgment
+// window doesn't eat extra seconds.
+const ROUND_LENGTH_MS = 5 * 60 * 1000;
+let roundElapsedMs = 0;
+
+function formatRoundTime(remainMs: number): string {
+  const r = Math.max(0, Math.ceil(remainMs / 1000));
+  const m = Math.floor(r / 60);
+  const s = r % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
 
 // -- Session-end overlay -----------------------------------------------------
 
@@ -289,6 +319,7 @@ function showEndOverlay(reason: SessionEndReason) {
   endReasonEl.textContent =
     reason === "PASS_SUCCESS" ? "GUARD PASSED (TOP WINS)" :
     reason === "TECHNIQUE_FINISHED" ? "TECHNIQUE CONFIRMED (BOTTOM WINS)" :
+    reason === "ROUND_TIME_UP" ? "TIME UP — ROUND OVER" :
     "GUARD OPENED — SCRAMBLE";
   endEl.style.display = "flex";
 }
@@ -301,6 +332,7 @@ function hideEndOverlay() {
 
 function restartSession() {
   hideEndOverlay();
+  setPaused(false);
   bState = INITIAL_LAYER_B_STATE;
   bDefState = INITIAL_LAYER_B_DEFENSE_STATE;
   dState = INITIAL_LAYER_D_STATE;
@@ -311,6 +343,7 @@ function restartSession() {
   lastDefense = null;
   eventLog.length = 0;
   activeScenario = null;
+  roundElapsedMs = 0;
   lastRafMs = performance.now();
   simState = Object.freeze({
     accumulatorMs: 0,
@@ -327,6 +360,7 @@ let activeScenario: ScenarioName | null = null;
 
 function loadScenario(name: ScenarioName): void {
   hideEndOverlay();
+  setPaused(false);
   bState = INITIAL_LAYER_B_STATE;
   bDefState = INITIAL_LAYER_B_DEFENSE_STATE;
   dState = INITIAL_LAYER_D_STATE;
@@ -337,6 +371,7 @@ function loadScenario(name: ScenarioName): void {
   lastDefense = null;
   eventLog.length = 0;
   activeScenario = name;
+  roundElapsedMs = 0;
   const now = performance.now();
   lastRafMs = now;
   simState = Object.freeze({
@@ -360,6 +395,18 @@ function frame(now: number) {
 
   if (promptActive) {
     runPromptTick();
+    scene3d.render();
+    requestAnimationFrame(frame);
+    return;
+  }
+
+  // Paused: halt sim + keep polling for BTN_PAUSE edge to unpause.
+  if (paused) {
+    const f = layerA.sample(performance.now());
+    lastFrame = f;
+    if ((f.button_edges & ButtonBit.BTN_PAUSE) !== 0) {
+      setPaused(false);
+    }
     scene3d.render();
     requestAnimationFrame(frame);
     return;
@@ -391,6 +438,27 @@ function frame(now: number) {
   }
 
   scene3d.updatePulses(realDt);
+
+  // BTN_PAUSE edge: sampled once per rAF (not per fixed step) because
+  // the pause gate lives in this loop, not in stepSimulation.
+  const pauseProbe = layerA.sample(performance.now());
+  if ((pauseProbe.button_edges & ButtonBit.BTN_PAUSE) !== 0) {
+    setPaused(true);
+    scene3d.render();
+    requestAnimationFrame(frame);
+    return;
+  }
+
+  // Round timer: advance by real wall-clock. We don't use game_dt so
+  // judgment-window slow-mo doesn't add extra round time. Time-up is
+  // handled by funneling through the existing session-end path.
+  roundElapsedMs += realDt;
+  if (roundElapsedMs >= ROUND_LENGTH_MS && sessionEndReason === null) {
+    showEndOverlay("ROUND_TIME_UP");
+    scene3d.render();
+    requestAnimationFrame(frame);
+    return;
+  }
 
   const res = advance(simState, realDt, {
     sample: (stepNowMs: number) => {
@@ -602,14 +670,27 @@ function applyToScene(g: GameState) {
     0;
   scene3d.setWindowTint(tintStrength);
   scene3d.setInitiative(g.control.initiative);
+
+  // §5.4 — stamina color grading. Fatigue = 1 − stamina, clamped to a
+  // visible range so a small drain isn't overly orange. Spectate reads
+  // the worse of the two to highlight whichever side is struggling.
+  const staminaView =
+    role === "Top" ? g.top.stamina :
+    role === "Spectate" ? Math.min(g.bottom.stamina, g.top.stamina) :
+    g.bottom.stamina;
+  // Start the grade at stamina ≤ 0.6 and ramp to full at ≤ 0.15 so
+  // the mid-game sits neutral and the "呼吸が重い" zone is unmissable.
+  const fatigue = 1 - Math.max(0, (staminaView - 0.15) / 0.45);
+  scene3d.setStaminaFatigue(Math.max(0, Math.min(1, fatigue)));
 }
 
 function renderHud(f: InputFrame, intent: Intent, g: GameState, stepsThisRaf: number): string {
   const fmt = (n: number) => n.toFixed(2).padStart(5);
   const lines: string[] = [];
   lines.push(`role ${role}  device ${f.device_kind}  frame ${g.frameIndex}  steps/raf ${stepsThisRaf}  fixedMs ${FIXED_STEP_MS.toFixed(2)}`);
+  lines.push(`round ${formatRoundTime(ROUND_LENGTH_MS - roundElapsedMs)}  (Esc to pause)`);
   if (activeScenario !== null) {
-    lines.push(`scenario ${activeScenario}  (1–5 to switch · 0 to reset)`);
+    lines.push(`scenario ${activeScenario}  (1–7 to switch · 0 to reset)`);
   }
   lines.push("── Layer A ──");
   lines.push(`ls (${fmt(f.ls.x)}, ${fmt(f.ls.y)})   rs (${fmt(f.rs.x)}, ${fmt(f.rs.y)})`);

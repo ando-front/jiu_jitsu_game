@@ -17,6 +17,11 @@ export interface Scene3D {
   top: BlockmanRig;
   setWindowTint(strength: number): void;
   setInitiative(tint: InitiativeTint): void;
+  // §5.4 — warm-colour shift proportional to "how spent" the player's
+  // stamina is. Takes a normalised 0–1 fatigue value where 1 = fully
+  // spent. Scene handles the actual vignette colour interpolation so
+  // main.ts only needs to publish the scalar.
+  setStaminaFatigue(fatigue: number): void;
   // Transient pulses triggered by sim events. The caller fires-and-forgets
   // these; the scene owns the decay animation.
   pulseFlash(color: THREE.ColorRepresentation, durationMs?: number): void;
@@ -80,6 +85,9 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
       uFlashStrength: { value: 0 },
       uFlashColor: { value: new THREE.Color(0xffffff) },
       uVignetteColor: { value: new THREE.Color(0xfff2d0) },
+      // §5.4 — 0 = no fatigue (neutral), 1 = fully spent (warm shift).
+      uStaminaFatigue: { value: 0 },
+      uStaminaColor: { value: new THREE.Color(0xd06030) },
     },
     vertexShader: /* glsl */ `
       varying vec2 vUv;
@@ -94,14 +102,18 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
       uniform float uFlashStrength;
       uniform vec3  uFlashColor;
       uniform vec3  uVignetteColor;
+      uniform float uStaminaFatigue;
+      uniform vec3  uStaminaColor;
       void main() {
         vec2 c = vUv - 0.5;
         float r = length(c);
         float vignette = smoothstep(0.35, 0.8, r) * uWindowStrength;
-        float wash = uWindowStrength * 0.15 + uFlashStrength * 0.6;
+        // §5.4 stamina grading — edges darken & shift warm as fatigue rises.
+        float staminaVignette = smoothstep(0.28, 0.72, r) * uStaminaFatigue;
         vec3 rgb = mix(vec3(0.0), uVignetteColor, uWindowStrength * 0.25);
+        rgb = mix(rgb, uStaminaColor, staminaVignette * 0.75);
         rgb = mix(rgb, uFlashColor, uFlashStrength);
-        float alpha = max(vignette, uFlashStrength);
+        float alpha = max(max(vignette, staminaVignette * 0.65), uFlashStrength);
         gl_FragColor = vec4(rgb, alpha);
       }
     `,
@@ -132,6 +144,9 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
     top,
     setWindowTint(strength: number) {
       overlayMaterial.uniforms.uWindowStrength!.value = Math.max(0, Math.min(1, strength));
+    },
+    setStaminaFatigue(fatigue: number) {
+      overlayMaterial.uniforms.uStaminaFatigue!.value = Math.max(0, Math.min(1, fatigue));
     },
     setInitiative(tint: InitiativeTint) {
       const baseZ = 2.6;
