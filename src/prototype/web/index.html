@@ -512,7 +512,31 @@
           </ul>
           <p>終了後、画面に結果が表示され、<b>A / Space</b> でセッションをリスタートできます。</p>
 
-          <h2>11. 画面UIの読み方</h2>
+          <h2>11. 練習シナリオ(デバッグ用)</h2>
+          <p>
+            開発/検証用に、特定の技が出せる直前の状態を即座にロードできます。
+            ゲーム中に数字キーを押すと切り替わります。
+          </p>
+          <table>
+            <tr><th>キー</th><th>シナリオ</th><th>内容</th></tr>
+            <tr><td class="k">1</td><td><b>SCISSOR_READY</b></td>
+              <td>両足 LOCKED + 左手 SLEEVE_R GRIPPED + 横崩し 0.5。L-Stick を横に倒すだけで SCISSOR_SWEEP 窓が開く。</td></tr>
+            <tr><td class="k">2</td><td><b>FLOWER_READY</b></td>
+              <td>両足 LOCKED + 右手 WRIST_L GRIPPED + 前崩し 0.6。次フレームで FLOWER_SWEEP 条件成立。</td></tr>
+            <tr><td class="k">3</td><td><b>TRIANGLE_READY</b></td>
+              <td>左足 UNLOCKED + 左手 COLLAR_R GRIPPED + top.armExtractedRight=true。TRIANGLE 条件成立済み。</td></tr>
+            <tr><td class="k">4</td><td><b>CROSS_COLLAR_READY</b></td>
+              <td>両 COLLAR GRIPPED + 崩し 0.5+。両トリガーを最大で十字絞め判断窓に乗る。</td></tr>
+            <tr><td class="k">5</td><td><b>PASS_DEFENSE</b></td>
+              <td>TOP視点の防御練習。BOTTOM片足 UNLOCKED、スタミナ消耗気味でパスが決まる一歩手前。</td></tr>
+            <tr><td class="k">0</td><td><b>(reset)</b></td><td>ニュートラル状態に戻す。シナリオなしの対戦へ。</td></tr>
+          </table>
+          <p>
+            シナリオ中は左上HUDに <code>scenario SCISSOR_READY</code> のように表示されます。
+            技の発火条件にバグが疑われたとき、対応するシナリオをロードしてすぐ再現できます。
+          </p>
+
+          <h2>12. 画面UIの読み方</h2>
           <ul>
             <li><b>左上のHUD</b> — Layer A / Layer B / ActorState / GameStateを文字で表示する開発用ダッシュボード。数値で挙動を確かめられる。</li>
             <li><b>右上のLegend</b> — キー割り当て一覧。</li>
@@ -530,7 +554,7 @@
             <li><b>画面色</b> — 黄パルス=判断窓、水色パルス=カウンター窓、赤フラッシュ=ガード開け。</li>
           </ul>
 
-          <h2>12. 上達のヒント</h2>
+          <h2>13. 上達のヒント</h2>
           <ol>
             <li><b>最初は軽い崩し + 1グリップから</b>。いきなり両グリップを狙うと弾かれて短期記憶で取れなくなります。</li>
             <li><b>崩しは消える</b>ので、グリップと腰入力をセットで維持すること。</li>
