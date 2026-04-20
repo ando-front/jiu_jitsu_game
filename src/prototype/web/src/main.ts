@@ -19,6 +19,11 @@ import { ButtonBit, type InputFrame } from "./input/types.js";
 import type { DiscreteIntent, Intent } from "./input/intent.js";
 import { ZERO_DEFENSE_INTENT, type DefenseIntent } from "./input/intent_defense.js";
 import { initialGameState, type GameState, type SimEvent } from "./state/game_state.js";
+import {
+  SCENARIO_ORDER,
+  buildScenario,
+  type ScenarioName,
+} from "./state/scenarios.js";
 import { breakBucket } from "./state/posture_break.js";
 import { advance, FIXED_STEP_MS, type FixedStepState } from "./sim/fixed_step.js";
 import { createScene } from "./scene/blockman.js";
@@ -86,9 +91,10 @@ function toggleTutorial(): void {
 }
 
 tutorialToggleBtn.addEventListener("click", toggleTutorial);
-// H / Esc on a global listener — deliberately outside the game-input
-// keyboard source so the toggle works even while the role prompt or the
-// end-overlay owns input. Esc also closes it as a convenience.
+// H / Esc / 1-5 on a global listener — deliberately outside the
+// game-input keyboard source so these meta-keys work even while the
+// role prompt or the end-overlay owns game input. Digits load practice
+// scenarios (§ docs/design/state_machines_v1.md §8.2 conditions).
 window.addEventListener("keydown", (e) => {
   if (e.code === "KeyH") {
     toggleTutorial();
@@ -96,6 +102,22 @@ window.addEventListener("keydown", (e) => {
   } else if (e.code === "Escape" && tutorialIsOpen()) {
     setTutorial(false);
     e.preventDefault();
+  } else if (!tutorialIsOpen() && !promptActive) {
+    // Digit1..Digit5 → scenario 0..4. Digit0 → clear back to neutral.
+    const digitMatch = /^Digit([0-9])$/.exec(e.code);
+    if (digitMatch !== null) {
+      const n = Number(digitMatch[1]);
+      if (n === 0) {
+        restartSession();
+        e.preventDefault();
+      } else {
+        const idx = n - 1;
+        if (idx < SCENARIO_ORDER.length) {
+          loadScenario(SCENARIO_ORDER[idx]!);
+          e.preventDefault();
+        }
+      }
+    }
   }
 });
 
@@ -267,11 +289,38 @@ function restartSession() {
   lastIntent = null;
   lastDefense = null;
   eventLog.length = 0;
+  activeScenario = null;
   lastRafMs = performance.now();
   simState = Object.freeze({
     accumulatorMs: 0,
     simClockMs: performance.now(),
     game: initialGameState(performance.now()),
+  });
+}
+
+// -- Practice scenarios ------------------------------------------------------
+// Digit 1-5 loads a preset GameState seeded near a specific judgment-window
+// firing condition. See src/state/scenarios.ts. Loading clears the event
+// log and any in-progress end overlay, but leaves the role/tutorial alone.
+let activeScenario: ScenarioName | null = null;
+
+function loadScenario(name: ScenarioName): void {
+  hideEndOverlay();
+  bState = INITIAL_LAYER_B_STATE;
+  bDefState = INITIAL_LAYER_B_DEFENSE_STATE;
+  dState = INITIAL_LAYER_D_STATE;
+  dDefState = INITIAL_LAYER_D_DEFENSE_STATE;
+  pendingAi = null;
+  lastIntent = null;
+  lastDefense = null;
+  eventLog.length = 0;
+  activeScenario = name;
+  const now = performance.now();
+  lastRafMs = now;
+  simState = Object.freeze({
+    accumulatorMs: 0,
+    simClockMs: now,
+    game: buildScenario(name, now),
   });
 }
 
@@ -497,6 +546,9 @@ function renderHud(f: InputFrame, intent: Intent, g: GameState, stepsThisRaf: nu
   const fmt = (n: number) => n.toFixed(2).padStart(5);
   const lines: string[] = [];
   lines.push(`role ${role}  device ${f.device_kind}  frame ${g.frameIndex}  steps/raf ${stepsThisRaf}  fixedMs ${FIXED_STEP_MS.toFixed(2)}`);
+  if (activeScenario !== null) {
+    lines.push(`scenario ${activeScenario}  (1–5 to switch · 0 to reset)`);
+  }
   lines.push("── Layer A ──");
   lines.push(`ls (${fmt(f.ls.x)}, ${fmt(f.ls.y)})   rs (${fmt(f.rs.x)}, ${fmt(f.rs.y)})`);
   lines.push(`triggers L=${fmt(f.l_trigger)}  R=${fmt(f.r_trigger)}`);
