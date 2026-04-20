@@ -96,6 +96,121 @@
         font-size: 11px;
         color: #7b7b85;
       }
+      /* --- Tutorial overlay (日本語) ---------------------------------- */
+      #tutorial-toggle {
+        position: absolute;
+        bottom: 12px;
+        right: 12px;
+        padding: 8px 14px;
+        background: rgba(32, 34, 56, 0.85);
+        border: 1px solid #4e52a4;
+        border-radius: 6px;
+        color: #e6e8ff;
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+        z-index: 30;
+      }
+      #tutorial-toggle:hover {
+        background: rgba(52, 56, 92, 0.95);
+      }
+      #tutorial {
+        position: absolute;
+        inset: 0;
+        display: none;
+        background: rgba(6, 6, 10, 0.94);
+        color: #e6e6ea;
+        z-index: 60;
+        overflow-y: auto;
+        padding: 32px;
+        font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP",
+                     ui-monospace, Menlo, Consolas, monospace;
+        font-size: 14px;
+        line-height: 1.7;
+      }
+      #tutorial.open { display: block; }
+      #tutorial .inner {
+        max-width: 880px;
+        margin: 0 auto;
+        padding-bottom: 80px;
+      }
+      #tutorial h1 {
+        font-size: 24px;
+        margin: 0 0 4px;
+        letter-spacing: 0.05em;
+        color: #d8d8ff;
+      }
+      #tutorial .sub {
+        margin: 0 0 28px;
+        font-size: 12px;
+        color: #8d90a8;
+        letter-spacing: 0.08em;
+      }
+      #tutorial h2 {
+        margin: 32px 0 8px;
+        padding: 6px 10px;
+        border-left: 3px solid #7c80d4;
+        background: rgba(40, 44, 78, 0.5);
+        font-size: 16px;
+        color: #cfd3ff;
+      }
+      #tutorial h3 {
+        margin: 18px 0 6px;
+        font-size: 13px;
+        color: #b8bce0;
+        letter-spacing: 0.05em;
+      }
+      #tutorial p { margin: 6px 0; color: #d2d4dc; }
+      #tutorial ul, #tutorial ol {
+        margin: 6px 0 12px 24px;
+        color: #c8cad2;
+      }
+      #tutorial li { margin: 3px 0; }
+      #tutorial b, #tutorial strong { color: #f2e6a6; font-weight: 600; }
+      #tutorial code {
+        background: rgba(54, 58, 92, 0.55);
+        padding: 0 4px;
+        border-radius: 3px;
+        font-size: 12px;
+        color: #d0d4f0;
+      }
+      #tutorial table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 8px 0 16px;
+        font-size: 12px;
+      }
+      #tutorial th, #tutorial td {
+        padding: 6px 8px;
+        border: 1px solid #33365c;
+        text-align: left;
+        vertical-align: top;
+      }
+      #tutorial th {
+        background: rgba(46, 50, 82, 0.7);
+        color: #e2e4f2;
+      }
+      #tutorial td.k { color: #e4cf88; white-space: nowrap; }
+      #tutorial td.p { color: #88c4e4; white-space: nowrap; }
+      #tutorial .close-hint {
+        position: fixed;
+        top: 14px;
+        right: 22px;
+        padding: 6px 12px;
+        background: rgba(60, 64, 98, 0.9);
+        border-radius: 4px;
+        font-size: 12px;
+        color: #d2d4e8;
+      }
+      #tutorial .pill {
+        display: inline-block;
+        padding: 1px 8px;
+        margin-right: 4px;
+        border-radius: 10px;
+        background: rgba(80, 84, 130, 0.4);
+        color: #d4d6ea;
+        font-size: 11px;
+      }
     </style>
   </head>
   <body>
@@ -146,6 +261,218 @@
 
       <div id="device-hint">
         Stage 1 Prototype · Gamepad (Xbox/DualSense) or WASD/Arrows/F/J
+      </div>
+
+      <button id="tutorial-toggle" type="button">? チュートリアル [H]</button>
+
+      <div id="tutorial" role="dialog" aria-modal="true" aria-labelledby="tutorial-title">
+        <div class="close-hint">[H] または画面右下のボタンで閉じる</div>
+        <div class="inner">
+          <h1 id="tutorial-title">柔術シミュレータ — 遊び方ガイド</h1>
+          <p class="sub">Stage 1 プロトタイプ / M1 スコープ = クローズドガードの攻防のみ</p>
+
+          <h2>1. このゲームについて</h2>
+          <p>
+            本作はブラジリアン柔術(BJJ)の <b>クローズドガード</b> という局面を再現した対戦シミュレータです。
+            下になっている側(<b>BOTTOM</b>)は両足で相手の腰をロックしながらスイープや関節技を狙い、
+            上になっている側(<b>TOP</b>)は姿勢を維持しつつ技を切り、ガードをパスしようとします。
+          </p>
+          <p>
+            このプロトタイプはロジック検証用の簡易版で、見た目はブロックマンですが、
+            判定・タイミング・条件は実際の競技ルール(IBJJF/ADCC)を意識した設計になっています。
+          </p>
+
+          <h2>2. 役割を選ぶ</h2>
+          <p>
+            開始画面で <b>L-Stick 左右</b>(または <b>A / D キー</b>)で <b>BOTTOM</b> / <b>TOP</b> を切り替え、
+            <b>A ボタン</b>(または <b>Space</b>)で決定します。反対側はAIが自動で動きます。
+          </p>
+          <ul>
+            <li><b>BOTTOM(攻め側)</b> — クローズドガードを維持し、スイープや関節技でラウンドを取る。</li>
+            <li><b>TOP(防御側)</b> — 姿勢を戻し、攻めの手を切り(カット)、最後にガードを<b>パス</b>する。</li>
+          </ul>
+
+          <h2>3. 操作方法</h2>
+          <h3>共通キーバインド</h3>
+          <table>
+            <tr><th>キー</th><th>パッド</th><th>役割</th></tr>
+            <tr><td class="k">W / A / S / D</td><td class="p">L-Stick</td><td>腰/体重の向き・押し込み</td></tr>
+            <tr><td class="k">↑ ← ↓ →</td><td class="p">R-Stick</td><td>グリップ狙い/カット方向</td></tr>
+            <tr><td class="k">F</td><td class="p">L-Trigger</td><td>左手のグリップ強度/基点圧</td></tr>
+            <tr><td class="k">J</td><td class="p">R-Trigger</td><td>右手のグリップ強度/基点圧</td></tr>
+            <tr><td class="k">R</td><td class="p">L-Bumper</td><td>左足フック/左手カット試行</td></tr>
+            <tr><td class="k">U</td><td class="p">R-Bumper</td><td>右足フック/右手カット試行</td></tr>
+            <tr><td class="k">Space</td><td class="p">A / ✕</td><td>ベース維持・三角絞めコミット</td></tr>
+            <tr><td class="k">X</td><td class="p">B / ◯</td><td>全グリップ解放</td></tr>
+            <tr><td class="k">C</td><td class="p">Y / △</td><td>呼吸(スタミナ回復)</td></tr>
+            <tr><td class="k">V</td><td class="p">X / □</td><td>TOP:パスコミット/BOTTOM:未使用</td></tr>
+            <tr><td class="k">H</td><td class="p">-</td><td>このチュートリアルを開閉</td></tr>
+            <tr><td class="k">Esc</td><td class="p">Options</td><td>ポーズ(未実装)</td></tr>
+          </table>
+
+          <h3>BOTTOM(攻め)の意図</h3>
+          <ul>
+            <li><b>L-Stick 左右</b> = 腰を横に振る(ハサミスイープの軸作り)</li>
+            <li><b>L-Stick 上</b> = 腰を前に突き出す(ヒップバンプ・フラワーの軸作り)</li>
+            <li><b>R-Stick</b> = グリップのターゲットゾーン選択(↑ COLLAR / ↓ SLEEVE / ← 襟左 / → 袖右 など)</li>
+            <li><b>F / J</b> = 左右のトリガー。握りの強さ。強く握るほど崩しに寄与し、スタミナを使う</li>
+            <li><b>R / U</b> = 左右のフック(足)をロック/解除。両足UNLOCKED = ガード崩壊</li>
+          </ul>
+
+          <h3>TOP(防御)の意図</h3>
+          <ul>
+            <li><b>L-Stick</b> = 体重を前方/側方へ掛ける(<code>weight_forward</code> / <code>weight_lateral</code> = 姿勢崩しの相殺)</li>
+            <li><b>F / J</b> = 左右の手で相手の胸・腰・二頭筋・膝を押さえる(基点圧)</li>
+            <li><b>R / U</b> + <b>R-Stick</b> = カット試行。R-Stickの向きで攻め側のどの手を狙うか決まる</li>
+            <li><b>V</b> = パスコミット。条件を満たしているときだけ成立する</li>
+          </ul>
+
+          <h2>4. グリップと手の状態(HandFSM)</h2>
+          <p>各手は下記の6状態を遷移します。</p>
+          <table>
+            <tr><th>状態</th><th>意味</th></tr>
+            <tr><td><b>IDLE</b></td><td>胸前の中立位置。次の動作待ち</td></tr>
+            <tr><td><b>REACHING</b></td><td>ターゲットへ移動中(200–350ms、距離依存)</td></tr>
+            <tr><td><b>CONTACT</b></td><td>1フレームのみ接触判定</td></tr>
+            <tr><td><b>GRIPPED</b></td><td>握っている。強度はトリガー値に追従</td></tr>
+            <tr><td><b>PARRIED</b></td><td>弾かれた瞬間。即座にRETRACTへ</td></tr>
+            <tr><td><b>RETRACT</b></td><td>中立へ戻り中(150ms)。この間は再REACH不可</td></tr>
+          </table>
+          <p>
+            CONTACT での分岐ルール:
+          </p>
+          <ol>
+            <li>相手が同じゾーンを手で防御中 → <b>PARRIED</b></li>
+            <li>直近 <b>400ms</b> 以内に同手×同ゾーンで弾かれた → <b>PARRIED</b></li>
+            <li>それ以外 → <b>GRIPPED</b></li>
+          </ol>
+          <p>つまり「同じ手で同じ場所を連打してもすぐに取れない」。逆手か別ゾーンに切り替えるのが正解です。</p>
+
+          <h2>5. 姿勢崩し(Posture Break)</h2>
+          <p>
+            攻めの本質は「崩しの条件を作ってから技に入る」こと。崩しは2次元ベクトル <code>(lateral, sagittal)</code> で表されます。
+          </p>
+          <ul>
+            <li><b>lateral</b>(横) = -1(左へ崩す) 〜 +1(右へ崩す)</li>
+            <li><b>sagittal</b>(前後) = -1(後傾)〜 +1(前傾、顔が膝に近づく)</li>
+          </ul>
+          <p>崩しに寄与する要素:</p>
+          <ul>
+            <li>攻め側の腰入力(L-Stick の方向×押し込み量)</li>
+            <li>GRIPPED 中の手の引き寄せ(ゾーンごとに方向ベクトルが決まっている)</li>
+            <li>防御側の <code>weight_forward</code> / <code>weight_lateral</code> は<b>逆方向に相殺</b>する</li>
+            <li>何もしない時間 — <b>時定数 800ms</b> で原点に戻る</li>
+          </ul>
+
+          <h2>6. 判断窓(Judgment Window)</h2>
+          <p>
+            発動条件を満たすと <b>判断窓</b> が開きます。画面が黄色くパルスし、スローモーション(×0.3)になる時間です。
+          </p>
+          <table>
+            <tr><th>状態</th><th>時間</th><th>タイムスケール</th></tr>
+            <tr><td>CLOSED</td><td>不定</td><td>100%</td></tr>
+            <tr><td>OPENING</td><td>0.2s</td><td>100% → 30%</td></tr>
+            <tr><td><b>OPEN</b></td><td>最大 1.5s</td><td>30%</td></tr>
+            <tr><td>CLOSING</td><td>0.3s</td><td>30% → 100%</td></tr>
+            <tr><td>クールダウン</td><td>0.4s</td><td>100%(新規OPENING不可)</td></tr>
+          </table>
+          <p>
+            <b>重要</b>: 入力は常に実時間(60Hz)でポーリングされるので、スローモ中も指の反応は普通どおり効きます。
+            迷ったら <b>X(全グリップ解放)</b> で窓を見送ることもできます。
+          </p>
+
+          <h2>7. カウンター窓(Counter Window)</h2>
+          <p>
+            攻め側の判断窓が開いた瞬間、防御側にも <b>カウンター窓</b> が開きます(画面は水色)。
+            攻めの技ごとに対応する返し技があり、タイミング入力で攻めを無効化できます。
+          </p>
+          <table>
+            <tr><th>攻めの技</th><th>対応カウンター</th><th>入力(TOP側)</th></tr>
+            <tr>
+              <td>SCISSOR_SWEEP</td>
+              <td>SCISSOR_COUNTER</td>
+              <td>L-Stick を<b>スイープ方向と逆</b>に最大</td>
+            </tr>
+            <tr>
+              <td>TRIANGLE</td>
+              <td>TRIANGLE_EARLY_STACK</td>
+              <td>L-Stick 上 + <b>Space (BTN_BASE) ホールド</b></td>
+            </tr>
+          </table>
+          <p>カウンター成立時は攻めの判断窓が強制的にCLOSINGへ移行。TRIANGLE_EARLY_STACK は「腕引き出し」フラグも両側リセットします。</p>
+
+          <h2>8. 技一覧と発動条件</h2>
+          <table>
+            <tr><th>技</th><th>条件</th></tr>
+            <tr>
+              <td><b>ハサミスイープ</b></td>
+              <td>両足 LOCKED + 左右いずれかの SLEEVE を強度 0.6 以上で GRIPPED + <code>‖break‖ ≥ 0.4</code></td>
+            </tr>
+            <tr>
+              <td><b>フラワースイープ</b></td>
+              <td>両足 LOCKED + WRIST GRIPPED + 前崩し <code>sagittal ≥ 0.5</code></td>
+            </tr>
+            <tr>
+              <td><b>三角絞め</b></td>
+              <td>片足 UNLOCKED + 「腕引き出し」フラグON + COLLAR GRIPPED</td>
+            </tr>
+            <tr>
+              <td><b>オモプラッタ</b></td>
+              <td>片手 SLEEVE GRIPPED + 前崩し 0.6+(向きが同じ)+ 腰回転 <code>|hip_yaw| ≥ π/3</code></td>
+            </tr>
+            <tr>
+              <td><b>ヒップバンプ</b></td>
+              <td>前崩し 0.7+ と腰押し 0.5+ を <b>300ms 連続維持</b></td>
+            </tr>
+            <tr>
+              <td><b>十字絞め</b></td>
+              <td>両 COLLAR を強度 0.7+ で GRIPPED + <code>‖break‖ ≥ 0.5</code></td>
+            </tr>
+          </table>
+          <h3>「腕引き出し」について</h3>
+          <p>
+            三角絞めの前提となるフラグ。<b>WRIST / SLEEVE を強度 0.6+ で GRIPPED のまま、hip_pull 方向に 1.5 秒継続して引く</b>と ON になります。
+            一瞬のグリップでは発生しません。TOPが二頭筋へのベース圧、または RECOVERY_HOLD をかけると強制解除されます。
+          </p>
+
+          <h2>9. スタミナ</h2>
+          <p>各プレイヤーは <code>stamina: 0〜1</code> を持ちます。1.0 が完全回復、0.0 が行動不能。</p>
+          <h3>消費</h3>
+          <ul>
+            <li>手が REACHING または GRIPPED(強度 0.5+) = <code>-0.02/秒</code></li>
+            <li>崩しを維持している状態 = <code>-0.05 × ‖break‖ /秒</code>(攻め側)</li>
+            <li>技確定 = 一括 <code>-0.1</code></li>
+            <li>TOPの基点圧/体重配分 = 継続使用で緩やかに消費</li>
+          </ul>
+          <h3>回復</h3>
+          <ul>
+            <li><b>C(Breath)</b> + 全グリップなし + 腰静止 = <code>+0.1/秒</code></li>
+            <li>全四肢 IDLE + グリップなし = <code>+0.03/秒</code></li>
+          </ul>
+          <h3>クランプ(上限制約)</h3>
+          <ul>
+            <li><b>stamina &lt; 0.2</b> — トリガー強度の上限が <b>0.6</b>(十字絞めなど 0.7+ 条件が満たせない)</li>
+            <li><b>stamina &lt; 0.05</b> — 新規 REACHING 不可(既に握っている手は維持できる)</li>
+          </ul>
+
+          <h2>10. 勝敗条件</h2>
+          <p>ラウンドは次のいずれかで終了します:</p>
+          <ul>
+            <li><span class="pill">BOTTOM勝利</span> 判断窓で <b>技を確定</b>(スイープ・関節技いずれか)</li>
+            <li><span class="pill">TOP勝利</span> 条件を満たして <b>パス成立</b></li>
+            <li><span class="pill">終了</span> 両足 UNLOCKED = ガードが開く(M1スコープ外のスクランブル扱い)</li>
+          </ul>
+          <p>終了後、画面に結果が表示され、<b>A / Space</b> でセッションをリスタートできます。</p>
+
+          <h2>11. 上達のヒント</h2>
+          <ol>
+            <li><b>最初は軽い崩し + 1グリップから</b>。いきなり両グリップを狙うと弾かれて短期記憶で取れなくなります。</li>
+            <li><b>崩しは消える</b>ので、グリップと腰入力をセットで維持すること。</li>
+            <li><b>判断窓はスローモ</b>なので焦らない。見送っても 0.4s のクールダウン後にまた狙える。</li>
+            <li><b>TOP側のカット</b>は R-Stick の向きが重要。相手の握っている手を狙わないと不発。</li>
+            <li><b>スタミナが少ない</b>と高強度技(十字絞めなど)が出せなくなるので、不利なら呼吸で立て直す。</li>
+          </ol>
+        </div>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

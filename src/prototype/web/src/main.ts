@@ -48,6 +48,12 @@ promptEl.innerHTML = `
     Press <b>LS left/right</b> or <b>A/D</b> to switch to TOP (defender).<br>
     Press <b>[A] / Space</b> to start.
   </div>
+  <div style="font-size: 12px; opacity: 0.8; margin-top: 12px;
+              padding: 6px 14px; border: 1px solid #4e52a4; border-radius: 5px;
+              background: rgba(32, 34, 56, 0.6);">
+    遊び方がわからない場合は <b>[H]</b> キー、または画面右下の
+    <b>? チュートリアル</b> ボタンで日本語ガイドを表示できます。
+  </div>
 `;
 document.getElementById("app")?.appendChild(promptEl);
 const choiceEl = promptEl.querySelector("#role-choice") as HTMLElement;
@@ -58,6 +64,39 @@ let promptActive = true;
 function updatePrompt() {
   choiceEl.textContent = role === "Bottom" ? "BOTTOM" : "TOP";
 }
+
+// -- Tutorial overlay (日本語ガイド) ------------------------------------------
+// Toggled with H key or the "? チュートリアル" button. While open, the
+// fixed-step sim loop is paused so the player can read without the game
+// advancing. Separate from the role prompt and the session-end overlay.
+
+const tutorialEl = document.getElementById("tutorial") as HTMLElement;
+const tutorialToggleBtn = document.getElementById("tutorial-toggle") as HTMLButtonElement;
+
+function setTutorial(open: boolean): void {
+  tutorialEl.classList.toggle("open", open);
+  tutorialEl.scrollTop = 0;
+}
+function tutorialIsOpen(): boolean {
+  return tutorialEl.classList.contains("open");
+}
+function toggleTutorial(): void {
+  setTutorial(!tutorialIsOpen());
+}
+
+tutorialToggleBtn.addEventListener("click", toggleTutorial);
+// H / Esc on a global listener — deliberately outside the game-input
+// keyboard source so the toggle works even while the role prompt or the
+// end-overlay owns input. Esc also closes it as a convenience.
+window.addEventListener("keydown", (e) => {
+  if (e.code === "KeyH") {
+    toggleTutorial();
+    e.preventDefault();
+  } else if (e.code === "Escape" && tutorialIsOpen()) {
+    setTutorial(false);
+    e.preventDefault();
+  }
+});
 
 // -- Inputs -------------------------------------------------------------------
 
@@ -150,6 +189,14 @@ function restartSession() {
 function frame(now: number) {
   const realDt = now - lastRafMs;
   lastRafMs = now;
+
+  // Tutorial is modal — halt the sim loop and the role prompt alike so
+  // the player can read without state advancing beneath them.
+  if (tutorialIsOpen()) {
+    scene3d.render();
+    requestAnimationFrame(frame);
+    return;
+  }
 
   if (promptActive) {
     runPromptTick();
