@@ -60,6 +60,7 @@ describe("Top AI — priority 1 counter window commit", () => {
     if (out.role === "Top") {
       expect(out.defense.hip.weight_forward).toBe(1);
       expect(out.defense.discrete.some((d) => d.kind === "RECOVERY_HOLD")).toBe(true);
+      expect(out.confirmedCounter).toBe("TRIANGLE_EARLY_STACK");
     }
   });
 
@@ -76,7 +77,13 @@ describe("Top AI — priority 1 counter window commit", () => {
     const out = opponentIntent(g, "Top");
     if (out.role === "Top") {
       expect(out.defense.hip.weight_lateral).toBe(-1);
+      expect(out.confirmedCounter).toBe("SCISSOR_COUNTER");
     }
+  });
+
+  it("leaves confirmedCounter null when counter window is closed", () => {
+    const out = opponentIntent(base(), "Top");
+    if (out.role === "Top") expect(out.confirmedCounter).toBeNull();
   });
 });
 
@@ -192,7 +199,13 @@ describe("Bottom AI — priority 1 commit", () => {
       // SCISSOR_SWEEP commit pattern: LS horizontal + L_BUMPER toggle.
       expect(Math.abs(out.intent.hip.hip_lateral)).toBe(1);
       expect(out.intent.discrete.some((d) => d.kind === "FOOT_HOOK_TOGGLE" && d.side === "L")).toBe(true);
+      expect(out.confirmedTechnique).toBe("SCISSOR_SWEEP");
     }
+  });
+
+  it("leaves confirmedTechnique null when judgment window is closed", () => {
+    const out = opponentIntent(base(), "Bottom");
+    if (out.role === "Bottom") expect(out.confirmedTechnique).toBeNull();
   });
 });
 

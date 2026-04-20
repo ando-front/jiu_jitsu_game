@@ -23,13 +23,37 @@ const NEUTRAL_INTENT: Intent = Object.freeze({
 });
 
 export type AIOutput =
-  | { role: "Bottom"; intent: Intent }
-  | { role: "Top"; defense: DefenseIntent };
+  | {
+      role: "Bottom";
+      intent: Intent;
+      // Populated when the attacker judgment window is OPEN — the AI's
+      // commit decision that stepSimulation consumes directly, bypassing
+      // Layer D (which reads raw InputFrame and therefore can't see
+      // intent-level AI decisions).
+      confirmedTechnique: Technique | null;
+    }
+  | {
+      role: "Top";
+      defense: DefenseIntent;
+      // Symmetric to confirmedTechnique — the AI's counter commit that
+      // stepSimulation consumes directly, bypassing Layer D_defense.
+      confirmedCounter: CounterTechnique | null;
+    };
 
 // Main entry.
 export function opponentIntent(game: GameState, role: "Bottom" | "Top"): AIOutput {
-  if (role === "Top") return { role: "Top", defense: topDecide(game) };
-  return { role: "Bottom", intent: bottomDecide(game) };
+  if (role === "Top") {
+    const counterCommit =
+      game.counterWindow.state === "OPEN" && game.counterWindow.candidates.length > 0
+        ? game.counterWindow.candidates[0]!
+        : null;
+    return { role: "Top", defense: topDecide(game), confirmedCounter: counterCommit };
+  }
+  const techniqueCommit =
+    game.judgmentWindow.state === "OPEN" && game.judgmentWindow.candidates.length > 0
+      ? game.judgmentWindow.candidates[0]!
+      : null;
+  return { role: "Bottom", intent: bottomDecide(game), confirmedTechnique: techniqueCommit };
 }
 
 // -- TOP side (defender) -----------------------------------------------------
