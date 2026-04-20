@@ -15,13 +15,21 @@ const MAX_TRIGGER = 1.0;
 
 function evalTechniques(name: ScenarioName): ReadonlyArray<Technique> {
   const g = buildScenario(name, 1000);
+  // Scenario-specific JudgmentContext knobs that come from *live input*
+  // (hip yaw, hip push) rather than GameState. Mirrors the inputs a
+  // player would be holding while the scenario is loaded.
+  const hipYaw =
+    name === "OMOPLATA_READY" ? -Math.PI / 2 : // match OMOPLATA lateral -sign
+    name === "CROSS_COLLAR_READY" ? 0 :
+    Math.PI / 2;
+  const hipPush = name === "FLOWER_READY" || name === "HIP_BUMP_READY" ? 0.6 : 0;
   return evaluateAllTechniques(
     {
       bottom: g.bottom,
       top: g.top,
-      bottomHipYaw: name === "CROSS_COLLAR_READY" ? 0 : Math.PI / 2,
-      bottomHipPush: name === "FLOWER_READY" ? 0.6 : 0,
-      sustainedHipPushMs: 0,
+      bottomHipYaw: hipYaw,
+      bottomHipPush: hipPush,
+      sustainedHipPushMs: g.sustained.hipPushMs,
     },
     MAX_TRIGGER,
     MAX_TRIGGER,
@@ -39,6 +47,14 @@ describe("Scenarios — preconditions satisfied", () => {
 
   it("TRIANGLE_READY satisfies TRIANGLE", () => {
     expect(evalTechniques("TRIANGLE_READY")).toContain("TRIANGLE");
+  });
+
+  it("OMOPLATA_READY satisfies OMOPLATA", () => {
+    expect(evalTechniques("OMOPLATA_READY")).toContain("OMOPLATA");
+  });
+
+  it("HIP_BUMP_READY satisfies HIP_BUMP", () => {
+    expect(evalTechniques("HIP_BUMP_READY")).toContain("HIP_BUMP");
   });
 
   it("CROSS_COLLAR_READY satisfies CROSS_COLLAR", () => {
