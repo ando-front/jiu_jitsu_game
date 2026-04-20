@@ -12,7 +12,7 @@ import { INITIAL_LAYER_B_STATE, transformLayerB, type LayerBState } from "./inpu
 import { INITIAL_LAYER_B_DEFENSE_STATE, transformLayerBDefense, type LayerBDefenseState } from "./input/layerB_defense.js";
 import { INITIAL_LAYER_D_STATE, resolveLayerD, type LayerDState } from "./input/layerD.js";
 import { INITIAL_LAYER_D_DEFENSE_STATE, resolveLayerDDefense, type LayerDDefenseState } from "./input/layerD_defense.js";
-import { opponentIntent } from "./ai/opponent_ai.js";
+import { opponentIntent, type AIOutput } from "./ai/opponent_ai.js";
 import { KeyboardSource } from "./input/keyboard.js";
 import { LayerA } from "./input/layerA.js";
 import { ButtonBit, type InputFrame } from "./input/types.js";
@@ -89,6 +89,63 @@ let lastRafMs = performance.now();
 let lastIntent: Intent | null = null;
 let lastDefense: DefenseIntent | null = null;
 let lastFrame: InputFrame | null = null;
+// Stashed AI decision for the current fixed step. sample() fills this;
+// resolveCommit / resolveCounterCommit read it so we don't recompute the
+// AI twice per step.
+let pendingAi: AIOutput | null = null;
+// Reason last SESSION_ENDED pulse carried, so the restart overlay can
+// label the outcome. null when the session is still live.
+type SessionEndReason = "PASS_SUCCESS" | "TECHNIQUE_FINISHED" | "GUARD_OPENED";
+let sessionEndReason: SessionEndReason | null = null;
+
+// -- Session-end overlay -----------------------------------------------------
+
+const endEl = document.createElement("div");
+endEl.style.cssText = `
+  position: absolute; inset: 0; display: none; flex-direction: column;
+  align-items: center; justify-content: center; gap: 14px;
+  background: rgba(8, 8, 12, 0.82); color: #e6e6ea; z-index: 40;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  text-align: center; padding: 24px; pointer-events: none;
+`;
+endEl.innerHTML = `
+  <div style="font-size: 15px; letter-spacing: 0.2em; opacity: 0.65;">SESSION ENDED</div>
+  <div id="end-reason" style="font-size: 32px; font-weight: 600;">—</div>
+  <div style="font-size: 12px; opacity: 0.55;">Press <b>[A] / Space</b> to restart.</div>
+`;
+document.getElementById("app")?.appendChild(endEl);
+const endReasonEl = endEl.querySelector("#end-reason") as HTMLElement;
+
+function showEndOverlay(reason: SessionEndReason) {
+  sessionEndReason = reason;
+  endReasonEl.textContent =
+    reason === "PASS_SUCCESS" ? "GUARD PASSED (TOP WINS)" :
+    reason === "TECHNIQUE_FINISHED" ? "TECHNIQUE CONFIRMED (BOTTOM WINS)" :
+    "GUARD OPENED — SCRAMBLE";
+  endEl.style.display = "flex";
+}
+
+function hideEndOverlay() {
+  sessionEndReason = null;
+  endEl.style.display = "none";
+}
+
+function restartSession() {
+  hideEndOverlay();
+  bState = INITIAL_LAYER_B_STATE;
+  bDefState = INITIAL_LAYER_B_DEFENSE_STATE;
+  dState = INITIAL_LAYER_D_STATE;
+  dDefState = INITIAL_LAYER_D_DEFENSE_STATE;
+  pendingAi = null;
+  lastIntent = null;
+  lastDefense = null;
+  lastRafMs = performance.now();
+  simState = Object.freeze({
+    accumulatorMs: 0,
+    simClockMs: performance.now(),
+    game: initialGameState(performance.now()),
+  });
+}
 
 function frame(now: number) {
   const realDt = now - lastRafMs;
@@ -96,6 +153,21 @@ function frame(now: number) {
 
   if (promptActive) {
     runPromptTick();
+    scene3d.render();
+    requestAnimationFrame(frame);
+    return;
+  }
+
+  // Session-ended: stop the fixed-step loop but keep polling input so
+  // the player can restart. Scene pulses still drain so the confirm
+  // flash doesn't freeze mid-fade.
+  if (sessionEndReason !== null) {
+    scene3d.updatePulses(realDt);
+    const f = layerA.sample(performance.now());
+    lastFrame = f;
+    if ((f.button_edges & ButtonBit.BTN_BASE) !== 0) {
+      restartSession();
+    }
     scene3d.render();
     requestAnimationFrame(frame);
     return;
@@ -114,6 +186,7 @@ function frame(now: number) {
         lastIntent = b.intent;
         // AI plays TOP — observes GameState AFTER previous step.
         const ai = opponentIntent(simState.game, "Top");
+        pendingAi = ai;
         const aiDefense = ai.role === "Top" ? ai.defense : ZERO_DEFENSE_INTENT;
         lastDefense = aiDefense;
         return { frame: inputFrame, intent: b.intent, defense: aiDefense };
@@ -123,13 +196,17 @@ function frame(now: number) {
         lastDefense = d.intent;
         // AI plays BOTTOM — observes GameState AFTER previous step.
         const ai = opponentIntent(simState.game, "Bottom");
+        pendingAi = ai;
         const aiIntent = ai.role === "Bottom" ? ai.intent : NEUTRAL_INTENT;
         lastIntent = aiIntent;
         return { frame: inputFrame, intent: aiIntent, defense: d.intent };
       }
     },
     resolveCommit: (f, intent, game, dtMs) => {
-      if (role !== "Bottom") return null;
+      if (role !== "Bottom") {
+        // Human plays Top → AI is Bottom. Use its stashed decision.
+        return pendingAi?.role === "Bottom" ? pendingAi.confirmedTechnique : null;
+      }
       const windowIsOpen = game.judgmentWindow.state === "OPEN";
       const r = resolveLayerD(dState, {
         nowMs: f.timestamp,
@@ -143,7 +220,10 @@ function frame(now: number) {
       return r.confirmedTechnique;
     },
     resolveCounterCommit: (f, game, dtMs) => {
-      if (role !== "Top") return null;
+      if (role !== "Top") {
+        // Human plays Bottom → AI is Top. Use its stashed decision.
+        return pendingAi?.role === "Top" ? pendingAi.confirmedCounter : null;
+      }
       const windowIsOpen = game.counterWindow.state === "OPEN";
       const r = resolveLayerDDefense(dDefState, {
         nowMs: f.timestamp,
@@ -195,6 +275,9 @@ function frame(now: number) {
         break;
       case "PASS_FAILED":
         scene3d.pulseFlash(0xffb080, 260);
+        break;
+      case "SESSION_ENDED":
+        showEndOverlay(ev.reason);
         break;
     }
   }
