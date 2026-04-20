@@ -28,7 +28,8 @@ import { breakBucket } from "./state/posture_break.js";
 import { advance, FIXED_STEP_MS, type FixedStepState } from "./sim/fixed_step.js";
 import { createScene } from "./scene/blockman.js";
 
-type Role = "Bottom" | "Top";
+type Role = "Bottom" | "Top" | "Spectate";
+const ROLE_CYCLE: readonly Role[] = ["Bottom", "Top", "Spectate"] as const;
 
 const canvas = document.getElementById("three-canvas") as HTMLCanvasElement;
 const hud = document.getElementById("debug-hud") as HTMLPreElement;
@@ -49,9 +50,9 @@ promptEl.style.cssText = `
 promptEl.innerHTML = `
   <div style="font-size: 22px; letter-spacing: 0.1em;">ROLE</div>
   <div id="role-choice" style="font-size: 36px; font-weight: 600;">BOTTOM</div>
-  <div style="font-size: 13px; opacity: 0.65; max-width: 520px; line-height: 1.6;">
+  <div id="role-description" style="font-size: 13px; opacity: 0.65; max-width: 520px; line-height: 1.6;">
     You are <b>[BOTTOM]</b> — attacker holding closed guard.<br>
-    Press <b>LS left/right</b> or <b>A/D</b> to switch to TOP (defender).<br>
+    Nudge <b>LS left/right</b> or tap <b>A/D</b> to cycle BOTTOM → TOP → SPECTATE.<br>
     Press <b>[A] / Space</b> to start.
   </div>
   <div style="font-size: 12px; opacity: 0.8; margin-top: 12px;
@@ -63,12 +64,22 @@ promptEl.innerHTML = `
 `;
 document.getElementById("app")?.appendChild(promptEl);
 const choiceEl = promptEl.querySelector("#role-choice") as HTMLElement;
+const descEl = promptEl.querySelector("#role-description") as HTMLElement;
 
 let role: Role = "Bottom";
 let promptActive = true;
 
 function updatePrompt() {
-  choiceEl.textContent = role === "Bottom" ? "BOTTOM" : "TOP";
+  choiceEl.textContent = role.toUpperCase();
+  const body =
+    role === "Bottom"
+      ? "You are <b>[BOTTOM]</b> — attacker holding closed guard."
+      : role === "Top"
+      ? "You are <b>[TOP]</b> — defender trying to pass."
+      : "<b>[SPECTATE]</b> — both sides run by AI; you observe.";
+  descEl.innerHTML = `${body}<br>
+    Nudge <b>LS left/right</b> or tap <b>A/D</b> to cycle BOTTOM → TOP → SPECTATE.<br>
+    Press <b>[A] / Space</b> to start.`;
 }
 
 // -- Tutorial overlay (日本語ガイド) ------------------------------------------
@@ -151,10 +162,13 @@ let lastRafMs = performance.now();
 let lastIntent: Intent | null = null;
 let lastDefense: DefenseIntent | null = null;
 let lastFrame: InputFrame | null = null;
-// Stashed AI decision for the current fixed step. sample() fills this;
-// resolveCommit / resolveCounterCommit read it so we don't recompute the
-// AI twice per step.
-let pendingAi: AIOutput | null = null;
+// Stashed AI decisions for the current fixed step. sample() fills these;
+// resolveCommit / resolveCounterCommit read them so we don't recompute
+// the AI twice per step. In Spectate mode both are populated; in the
+// single-human modes only the AI-owned side is populated and the other
+// stays null.
+let pendingAiBottom: AIOutput | null = null;
+let pendingAiTop: AIOutput | null = null;
 
 // -- Event log ---------------------------------------------------------------
 // Rolling buffer of the last N sim events so transient outcomes
@@ -246,6 +260,10 @@ function escapeHtml(s: string): string {
 // label the outcome. null when the session is still live.
 type SessionEndReason = "PASS_SUCCESS" | "TECHNIQUE_FINISHED" | "GUARD_OPENED";
 let sessionEndReason: SessionEndReason | null = null;
+// Wall-clock accumulator since the end overlay appeared, used to
+// auto-restart while spectating. Reset on show/hide.
+let sessionEndElapsedMs = 0;
+const SPECTATE_AUTO_RESTART_MS = 2000;
 
 // -- Session-end overlay -----------------------------------------------------
 
@@ -267,6 +285,7 @@ const endReasonEl = endEl.querySelector("#end-reason") as HTMLElement;
 
 function showEndOverlay(reason: SessionEndReason) {
   sessionEndReason = reason;
+  sessionEndElapsedMs = 0;
   endReasonEl.textContent =
     reason === "PASS_SUCCESS" ? "GUARD PASSED (TOP WINS)" :
     reason === "TECHNIQUE_FINISHED" ? "TECHNIQUE CONFIRMED (BOTTOM WINS)" :
@@ -276,6 +295,7 @@ function showEndOverlay(reason: SessionEndReason) {
 
 function hideEndOverlay() {
   sessionEndReason = null;
+  sessionEndElapsedMs = 0;
   endEl.style.display = "none";
 }
 
@@ -285,7 +305,8 @@ function restartSession() {
   bDefState = INITIAL_LAYER_B_DEFENSE_STATE;
   dState = INITIAL_LAYER_D_STATE;
   dDefState = INITIAL_LAYER_D_DEFENSE_STATE;
-  pendingAi = null;
+  pendingAiBottom = null;
+  pendingAiTop = null;
   lastIntent = null;
   lastDefense = null;
   eventLog.length = 0;
@@ -310,7 +331,8 @@ function loadScenario(name: ScenarioName): void {
   bDefState = INITIAL_LAYER_B_DEFENSE_STATE;
   dState = INITIAL_LAYER_D_STATE;
   dDefState = INITIAL_LAYER_D_DEFENSE_STATE;
-  pendingAi = null;
+  pendingAiBottom = null;
+  pendingAiTop = null;
   lastIntent = null;
   lastDefense = null;
   eventLog.length = 0;
@@ -351,6 +373,14 @@ function frame(now: number) {
     scene3d.updatePulses(realDt);
     const f = layerA.sample(performance.now());
     lastFrame = f;
+    // Spectate: auto-restart after a short delay so you can leave the
+    // sim running as a stress test / passive observer.
+    if (role === "Spectate") {
+      sessionEndElapsedMs += realDt;
+      if (sessionEndElapsedMs >= SPECTATE_AUTO_RESTART_MS) {
+        restartSession();
+      }
+    }
     if ((f.button_edges & ButtonBit.BTN_BASE) !== 0) {
       restartSession();
     }
@@ -371,28 +401,42 @@ function frame(now: number) {
         const b = transformLayerB(inputFrame, bState);
         bState = b.nextState;
         lastIntent = b.intent;
-        // AI plays TOP — observes GameState AFTER previous step.
-        const ai = opponentIntent(simState.game, "Top");
-        pendingAi = ai;
-        const aiDefense = ai.role === "Top" ? ai.defense : ZERO_DEFENSE_INTENT;
+        const aiTop = opponentIntent(simState.game, "Top");
+        pendingAiTop = aiTop;
+        pendingAiBottom = null;
+        const aiDefense = aiTop.role === "Top" ? aiTop.defense : ZERO_DEFENSE_INTENT;
         lastDefense = aiDefense;
         return { frame: inputFrame, intent: b.intent, defense: aiDefense };
-      } else {
+      } else if (role === "Top") {
         const d = transformLayerBDefense(inputFrame, bDefState);
         bDefState = d.nextState;
         lastDefense = d.intent;
-        // AI plays BOTTOM — observes GameState AFTER previous step.
-        const ai = opponentIntent(simState.game, "Bottom");
-        pendingAi = ai;
-        const aiIntent = ai.role === "Bottom" ? ai.intent : NEUTRAL_INTENT;
+        const aiBottom = opponentIntent(simState.game, "Bottom");
+        pendingAiBottom = aiBottom;
+        pendingAiTop = null;
+        const aiIntent = aiBottom.role === "Bottom" ? aiBottom.intent : NEUTRAL_INTENT;
         lastIntent = aiIntent;
         return { frame: inputFrame, intent: aiIntent, defense: d.intent };
+      } else {
+        // Spectate: both sides from AI. Human input is ignored but still
+        // sampled so the HUD reflects the connected controller.
+        const aiBottom = opponentIntent(simState.game, "Bottom");
+        const aiTop = opponentIntent(simState.game, "Top");
+        pendingAiBottom = aiBottom;
+        pendingAiTop = aiTop;
+        const aiIntent = aiBottom.role === "Bottom" ? aiBottom.intent : NEUTRAL_INTENT;
+        const aiDefense = aiTop.role === "Top" ? aiTop.defense : ZERO_DEFENSE_INTENT;
+        lastIntent = aiIntent;
+        lastDefense = aiDefense;
+        return { frame: inputFrame, intent: aiIntent, defense: aiDefense };
       }
     },
     resolveCommit: (f, intent, game, dtMs) => {
       if (role !== "Bottom") {
-        // Human plays Top → AI is Bottom. Use its stashed decision.
-        return pendingAi?.role === "Bottom" ? pendingAi.confirmedTechnique : null;
+        // Top or Spectate → Bottom is AI. Use its stashed decision.
+        return pendingAiBottom?.role === "Bottom"
+          ? pendingAiBottom.confirmedTechnique
+          : null;
       }
       const windowIsOpen = game.judgmentWindow.state === "OPEN";
       const r = resolveLayerD(dState, {
@@ -408,8 +452,8 @@ function frame(now: number) {
     },
     resolveCounterCommit: (f, game, dtMs) => {
       if (role !== "Top") {
-        // Human plays Bottom → AI is Top. Use its stashed decision.
-        return pendingAi?.role === "Top" ? pendingAi.confirmedCounter : null;
+        // Bottom or Spectate → Top is AI. Use its stashed decision.
+        return pendingAiTop?.role === "Top" ? pendingAiTop.confirmedCounter : null;
       }
       const windowIsOpen = game.counterWindow.state === "OPEN";
       const r = resolveLayerDDefense(dDefState, {
@@ -488,12 +532,24 @@ const NEUTRAL_INTENT: Intent = Object.freeze({
   discrete: [],
 });
 
+// Edge-detected LS.x so cycling role requires a fresh push (not just
+// holding left/right). The previous two-way assignment didn't work for
+// three roles because there's no stick position for "Spectate".
+let lastPromptLsX = 0;
+
 function runPromptTick() {
   const f = layerA.sample(performance.now());
   lastFrame = f;
-  // Switch role by LS horizontal.
-  if (f.ls.x < -0.6) role = "Bottom";
-  else if (f.ls.x > 0.6) role = "Top";
+  const crossedLeft = lastPromptLsX > -0.6 && f.ls.x <= -0.6;
+  const crossedRight = lastPromptLsX < 0.6 && f.ls.x >= 0.6;
+  if (crossedLeft) {
+    const idx = ROLE_CYCLE.indexOf(role);
+    role = ROLE_CYCLE[(idx - 1 + ROLE_CYCLE.length) % ROLE_CYCLE.length]!;
+  } else if (crossedRight) {
+    const idx = ROLE_CYCLE.indexOf(role);
+    role = ROLE_CYCLE[(idx + 1) % ROLE_CYCLE.length]!;
+  }
+  lastPromptLsX = f.ls.x;
   updatePrompt();
   // Dismiss with BTN_BASE edge.
   if ((f.button_edges & ButtonBit.BTN_BASE) !== 0) {
@@ -513,18 +569,24 @@ function runPromptTick() {
 // -- Scene application --------------------------------------------------------
 
 function applyToScene(g: GameState) {
-  if (role === "Bottom" && lastIntent !== null) {
+  // Bottom rig is driven by the attacker intent regardless of who's
+  // supplying it (human-as-Bottom, AI-as-Bottom during Top/Spectate).
+  if (lastIntent !== null && role !== "Top") {
     scene3d.bottom.root.rotation.y = lastIntent.hip.hip_angle_target;
     scene3d.bottom.root.position.z = lastIntent.hip.hip_push * 0.3;
     scene3d.bottom.root.position.x = lastIntent.hip.hip_lateral * 0.2;
-  } else if (role === "Top" && lastDefense !== null) {
-    // As defender, the player controls the top rig's weight.
+  }
+  // Top rig's weight signals come from defender intent (human-as-Top or
+  // AI-as-Top during Bottom/Spectate). In Spectate specifically, we also
+  // want the postureBreak to keep driving the top rig because defense
+  // intent alone doesn't encode crumple. The logic below handles both.
+  if (lastDefense !== null && role === "Top") {
     scene3d.top.root.position.x = lastDefense.hip.weight_lateral * 0.25;
     scene3d.top.root.position.z = -1.1 + lastDefense.hip.weight_forward * 0.25;
   }
 
   const pb = g.top.postureBreak;
-  if (role === "Bottom") {
+  if (role === "Bottom" || role === "Spectate") {
     scene3d.top.root.position.x = pb.x * 0.25;
     scene3d.top.root.position.z = -1.1 + pb.y * 0.3;
   }
@@ -555,14 +617,19 @@ function renderHud(f: InputFrame, intent: Intent, g: GameState, stepsThisRaf: nu
   lines.push(`buttons ${formatButtons(f.buttons)}`);
   lines.push(`edges ${formatButtons(f.button_edges)}`);
 
-  if (role === "Bottom") {
-    lines.push("── Layer B (attacker) ──");
+  // Attacker intent panel: shown for Bottom (human) and Spectate (AI).
+  if (role === "Bottom" || role === "Spectate") {
+    const label = role === "Bottom" ? "attacker" : "attacker (AI)";
+    lines.push(`── Layer B (${label}) ──`);
     lines.push(`hip θ=${fmt(intent.hip.hip_angle_target)}  push=${fmt(intent.hip.hip_push)}  lat=${fmt(intent.hip.hip_lateral)}`);
     lines.push(`grip L ${intent.grip.l_hand_target ?? "·"} (${fmt(intent.grip.l_grip_strength)})`);
     lines.push(`grip R ${intent.grip.r_hand_target ?? "·"} (${fmt(intent.grip.r_grip_strength)})`);
     lines.push(`discrete ${formatDiscrete(intent.discrete)}`);
-  } else if (lastDefense !== null) {
-    lines.push("── Layer B (defender) ──");
+  }
+  // Defender intent panel: shown for Top (human) and Spectate (AI).
+  if ((role === "Top" || role === "Spectate") && lastDefense !== null) {
+    const label = role === "Top" ? "defender" : "defender (AI)";
+    lines.push(`── Layer B (${label}) ──`);
     lines.push(`weight fwd=${fmt(lastDefense.hip.weight_forward)}  lat=${fmt(lastDefense.hip.weight_lateral)}`);
     lines.push(`base L ${lastDefense.base.l_hand_target ?? "·"} (${fmt(lastDefense.base.l_base_pressure)})`);
     lines.push(`base R ${lastDefense.base.r_hand_target ?? "·"} (${fmt(lastDefense.base.r_base_pressure)})`);
