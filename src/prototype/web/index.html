@@ -96,6 +96,49 @@
         font-size: 11px;
         color: #7b7b85;
       }
+      /* Rolling SimEvent log — bottom-right.
+         Shows the last ~12 sim events so transient outcomes
+         (GRIPPED / PARRIED / WINDOW_OPENING / TECHNIQUE_CONFIRMED / CUT_*)
+         can be read after the fact. Helps debugging "why didn't my
+         technique fire" without needing to scrub through a replay. */
+      #event-log {
+        position: absolute;
+        bottom: 60px;
+        right: 12px;
+        width: 280px;
+        max-height: 240px;
+        padding: 8px 10px;
+        background: rgba(0, 0, 0, 0.55);
+        border: 1px solid #2a2a30;
+        border-radius: 6px;
+        font-size: 11px;
+        line-height: 1.45;
+        color: #c6c8cc;
+        overflow: hidden;
+        pointer-events: none;
+      }
+      #event-log h3 {
+        margin: 0 0 6px;
+        font-size: 10px;
+        letter-spacing: 0.1em;
+        color: #9ea0ff;
+        text-transform: uppercase;
+      }
+      #event-log ul { margin: 0; padding: 0; list-style: none; }
+      #event-log li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      #event-log .t { color: #6a6d80; margin-right: 6px; }
+      #event-log .kGRIPPED, #event-log .kTECHNIQUE_CONFIRMED { color: #e4cf88; }
+      #event-log .kPARRIED, #event-log .kGRIP_BROKEN { color: #e88a5c; }
+      #event-log .kWINDOW_OPENING, #event-log .kWINDOW_OPEN { color: #f2e6a6; }
+      #event-log .kCOUNTER_WINDOW_OPENING, #event-log .kCOUNTER_CONFIRMED { color: #9ec9ff; }
+      #event-log .kCUT_STARTED { color: #c8a4ff; }
+      #event-log .kCUT_SUCCEEDED { color: #ff8aa4; }
+      #event-log .kCUT_FAILED { color: #7e7a90; }
+      #event-log .kPASS_STARTED { color: #9ec9ff; }
+      #event-log .kPASS_SUCCEEDED { color: #b4eaff; }
+      #event-log .kPASS_FAILED { color: #ffb080; }
+      #event-log .kSESSION_ENDED, #event-log .kGUARD_OPENED { color: #ff7070; }
+      #event-log .args { color: #a8a8ac; }
       /* --- Tutorial overlay (日本語) ---------------------------------- */
       #tutorial-toggle {
         position: absolute;
@@ -261,6 +304,11 @@
 
       <div id="device-hint">
         Stage 1 Prototype · Gamepad (Xbox/DualSense) or WASD/Arrows/F/J
+      </div>
+
+      <div id="event-log">
+        <h3>Event log</h3>
+        <ul id="event-log-list"></ul>
       </div>
 
       <button id="tutorial-toggle" type="button">? チュートリアル [H]</button>
@@ -464,7 +512,25 @@
           </ul>
           <p>終了後、画面に結果が表示され、<b>A / Space</b> でセッションをリスタートできます。</p>
 
-          <h2>11. 上達のヒント</h2>
+          <h2>11. 画面UIの読み方</h2>
+          <ul>
+            <li><b>左上のHUD</b> — Layer A / Layer B / ActorState / GameStateを文字で表示する開発用ダッシュボード。数値で挙動を確かめられる。</li>
+            <li><b>右上のLegend</b> — キー割り当て一覧。</li>
+            <li><b>右下のEvent log</b> — 直近 <b>12件</b> のSimEventを秒単位のエイジ付きで表示します。色は種類別:
+              <ul>
+                <li><span style="color:#e4cf88;">GRIPPED / TECHNIQUE_CONFIRMED</span></li>
+                <li><span style="color:#e88a5c;">PARRIED / GRIP_BROKEN</span></li>
+                <li><span style="color:#f2e6a6;">WINDOW_OPENING</span>(攻め側の判断窓)</li>
+                <li><span style="color:#9ec9ff;">COUNTER_WINDOW_OPENING / COUNTER_CONFIRMED</span></li>
+                <li><span style="color:#c8a4ff;">CUT_STARTED</span>、<span style="color:#ff8aa4;">CUT_SUCCEEDED</span>、<span style="color:#7e7a90;">CUT_FAILED</span></li>
+                <li><span style="color:#ff7070;">GUARD_OPENED / SESSION_ENDED</span></li>
+              </ul>
+              スローモ中の派手なフラッシュを見逃しても、ここで後から何が起きたか追えます。
+            </li>
+            <li><b>画面色</b> — 黄パルス=判断窓、水色パルス=カウンター窓、赤フラッシュ=ガード開け。</li>
+          </ul>
+
+          <h2>12. 上達のヒント</h2>
           <ol>
             <li><b>最初は軽い崩し + 1グリップから</b>。いきなり両グリップを狙うと弾かれて短期記憶で取れなくなります。</li>
             <li><b>崩しは消える</b>ので、グリップと腰入力をセットで維持すること。</li>
