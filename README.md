@@ -40,7 +40,11 @@ src/
     web/               # Stage 1 HTML/TypeScript prototype (Vite + Three.js + Vitest)
     ue5/               # Stage 2 UE5 project (README only; not scaffolded)
 assets/
-  mocap/, textures/, audio/   # Large binaries — use Git LFS
+  mocap/, textures/, audio/   # Reserved for large binaries; empty today.
+                              # LFS is NOT yet enabled (no .gitattributes).
+                              # Run `git lfs install` + `git lfs track` before
+                              # first binary commit. Setup steps live in
+                              # src/prototype/ue5/README.md §2.2.
 tests/                 # Cross-cutting test scripts
 ```
 
