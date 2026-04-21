@@ -102,8 +102,9 @@ UE5 プロジェクト追加時に有効化 + 追記。
 4. 制御系(GuardFSM, ControlLayer, JudgmentWindow, CounterWindow)
 5. 入力層(APlayerController → FBJJInputFrame → BJJLayerB)
 6. 固定ステップ(AGameMode)
-7. **7a. PostProcess**(暖色シフト + window vignette、アート非依存)
-   **7b. Character**(ACharacter + AnimBP + Chaos Cloth、モキャップ依存)
+7. 以下を 2 分割:
+   - **7a. PostProcess**(暖色シフト + window vignette、アート非依存)
+   - **7b. Character**(ACharacter + AnimBP + Chaos Cloth、モキャップ依存)
 8. Automation Test で Stage 1 の 268 ケースを緑化
 
 **[1]〜[4] + [7a] はエディタ + art asset なしでビルド可** なので、Character 待ちの間も CI で port の退行を検出できる。

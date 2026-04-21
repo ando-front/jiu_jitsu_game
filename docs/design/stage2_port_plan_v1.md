@@ -63,8 +63,8 @@
 | `state/arm_extracted.ts` | `Public/State/BJJArmExtracted.h` + `.cpp` | 同型 |
 | `state/judgment_window.ts` | `Public/State/BJJJudgmentWindow.h` + `.cpp` | `Technique` → `UENUM EBJJTechnique`; timing 定数は `constexpr` |
 | `state/counter_window.ts` | `Public/State/BJJCounterWindow.h` + `.cpp` | 同型 |
-| `state/pass_attempt.ts` | `Public/State/BJJPassAttempt.h` + `.cpp` | `PassAttemptState` タグ付きユニオンは `TVariant<FIdle, FInProgress>` |
-| `state/cut_attempt.ts` | `Public/State/BJJCutAttempt.h` + `.cpp` | 同型 |
+| `state/pass_attempt.ts` | `Public/State/BJJPassAttempt.h` + `.cpp` | `PassAttemptState` タグ付きユニオンは **enum + payload**(§2.2)。`GameState` に保持される public state なので TVariant は不可 |
+| `state/cut_attempt.ts` | `Public/State/BJJCutAttempt.h` + `.cpp` | 同型(`FBJJCutAttemptSlot` は §2.2 の例そのまま) |
 | `state/control_layer.ts` | `Public/State/BJJControlLayer.h` + `.cpp` | `Initiative` → `UENUM EBJJInitiative` |
 | `state/game_state.ts` | `Public/State/BJJGameState.h` + `.cpp` | `stepSimulation` → `UBJJGameStateLibrary::Step`; `SimEvent` は **enum + payload USTRUCT** (§2.2)。`TVariant` は UPROPERTY 化不可のためリプレイ/Blueprint/シリアライズと両立しない |
 | `state/scenarios.ts` | `Public/State/BJJScenarios.h` + `.cpp` | **`#if !UE_BUILD_SHIPPING` ガード**で Development / Test ビルドに含め、Shipping で strip。`Exec` マークしたコンソールコマンド `BJJ.LoadScenario <Name>` から呼べる形に |
@@ -175,7 +175,11 @@ struct FCutSlotInProgress { int64 StartedMs; /*…*/ };
 using FCutAttemptSlotInternal = TVariant<FCutSlotIdle, FCutSlotInProgress>;
 ```
 
-`TVariant::Visit` で網羅性が型レベルで得られる代わりに UPROPERTY 化不可。**FSM の public state には使わない。**内部計算の一時変数用途のみ。
+`TVariant::Visit` で網羅性が型レベルで得られる代わりに UPROPERTY 化不可。**FSM の public state には使わない。**
+
+ここでいう public state とは、**`FBJJGameState` に保持される state、あるいは `UPROPERTY` / 直列化 / Blueprint 露出の対象になる state** を指す。したがって Stage 1 で `GameState` に乗っている `pass_attempt.ts` / `cut_attempt.ts` / `counter_window.ts` などの state はすべて public state 扱いで、`FBJJCutAttemptSlot` と同じ **enum + payload(`USTRUCT`)** パターンに寄せる。
+
+`TVariant` を使ってよいのは、tick 関数内で完結する**内部計算の一時変数**、または `UPROPERTY` 非対応 / 非シリアライズの純 C++ 実装詳細に限る。
 
 ### 2.3 純関数の tick
 
@@ -189,9 +193,9 @@ export function tickHand(prev: HandFSM, input: HandTickInput): {
 
 純ロジックは **Blueprint 露出が必要か** で 2 つに分岐する。
 
-**C++ デフォルト: namespace + free `static`**(Blueprint 露出不要、コンパイル依存最小):
+**C++ デフォルト: namespace + free function**(Blueprint 露出不要、コンパイル依存最小)。ヘッダは**宣言のみ**、定義は `.cpp` に置く(`static` を付けると内部リンケージになるので付けない。ヘッダ側で定義するなら `inline` 必須):
 ```cpp
-// Public/State/BJJHandFSM.h
+// Public/State/BJJHandFSM.h — 宣言のみ
 namespace BJJ::HandFSM
 {
   void Tick(
@@ -199,6 +203,12 @@ namespace BJJ::HandFSM
       const FBJJHandTickInput& Input,
       FBJJHandFSM& OutNext,
       TArray<FBJJHandTickEvent>& OutEvents);
+}
+
+// Private/State/BJJHandFSM.cpp — 定義
+namespace BJJ::HandFSM
+{
+  void Tick(/* ... */) { /* ... */ }
 }
 ```
 
@@ -294,6 +304,7 @@ Stage 1 と同じ順序で並行的に進める:
 - [ ] UE5.5 以上でプロジェクト雛形を作成、C++ モード
 - [ ] `Source/BJJSimulator/Public/Core` / `Input` / `State` / `Sim` / `AI` のサブフォルダを作成
 - [ ] `BJJSimulator.Build.cs` に `Core`, `CoreUObject`, `Engine`, `EnhancedInput` を入れる
+- [ ] Project Settings → Rendering → Global Illumination = **Lumen**、Reflections = **Lumen**(エンジン設定、Material Graph 不要)
 
 ### 5.2 ロジック移植
 - [ ] `src/prototype/web/src/state/hand_fsm.ts` と同一のテストを Automation Test で写経 → 緑を確認
@@ -307,11 +318,10 @@ Stage 1 と同じ順序で並行的に進める:
 - [ ] Gamepad polling interval を 60 Hz に合わせる(EnhancedInput 経由でも Layer A の実装で保証)
 - [ ] **手動測定**: grip 入力 → GRIPPED event → 画面反映までの end-to-end を 60 fps 固定で 50 ms 以内(M1 grip-fight feel の目標)
 
-### 5.4 ビジュアル(3 系統、独立工程)
+### 5.4 ビジュアル(3 系統、独立工程 — Lumen は §5.1 セットアップ側)
 - [ ] **PostProcess**: Stage 1 の暖色シフト shader を PostProcessVolume の Global Color Grading / Split-Toning で再実装(stamina fatigue 連動)。判断窓ビネット/Radial Blur も同一マテリアル
 - [ ] **Character Material (SSS)**: 肌のサブサーフェス散乱を Subsurface Profile で設定(Visual Pillar §2.1)。Character rig のマテリアル側
 - [ ] **Chaos Cloth (Gi)**: 道着のクロスシム。`SkeletalMeshComponent` にクロスアセットをバインド。Character [7b] 工程内で実施
-- [ ] **Lumen**: Project Settings → Rendering → Global Illumination = Lumen、Reflections = Lumen。エンジン設定、Material Graph 不要
 
 ### 5.5 デバッグ/可観測性
 - [ ] **Visual Logger**: Stage 1 の event log panel 相当を `FVisualLogger::EventLog` に落とす。各 `SimEvent` を `UE_VLOG_*` で発火
@@ -324,7 +334,7 @@ Stage 1 と同じ順序で並行的に進める:
 
 ---
 
-## 6. 未決事項(v1.2)
+## 6. 未決事項(次版 v1.2 改訂で取り込む)
 
 - **Blueprint 露出範囲**: どこまで `UPROPERTY(BlueprintReadOnly)` を付けるか(デザイナの調整範囲)
 - **リプレイデータ形式**: Stage 1 の `SimEvent` 配列をそのままシリアライズするか、デルタ保存か(enum + payload 形式決定後に確定)
