@@ -475,8 +475,17 @@ TimeContext {
 
 ## 12. 未決事項（v1.1で扱う）
 
-- 防御側（`TopActor`）の固有アクション詳細（カット入力のボタン割当、ベース維持の継続条件など）。入力系v1.1 と並行
-- `posture_break` の各係数 `K*`（§3.3）の数値確定。M1プレイテスト後
-- `LOCKING` 中に相手が前傾しなかった場合の追加挙動（再試行クールダウン等）
-- スタミナのカラーグレーディング連動仕様（Visual Pillar 側との整合）
-- 判断窓 `OPEN` 中に複数候補から選ばせる UI/プロンプト仕様（HUDなし制約下での提示方法）
+**Stage 1 実装 (2026-04-21) で判明した点は [stage1_implementation_notes_v1.md](./stage1_implementation_notes_v1.md) に記録済**。以下は本ドキュメント v1.1 改訂時に正式に取り込む候補。
+
+### 解消済み（Stage 1 で確定）
+
+- ✅ **防御側（`TopActor`）の固有アクション詳細** — [input_system_defense_v1.md](./input_system_defense_v1.md) で確定。カット入力とベース維持も含む
+- ✅ **スタミナのカラーグレーディング連動仕様** — Stage 1 で具体化。fatigue = 1 - (stamina − 0.15)/0.45 の線形ランプで 0.6→0.15 区間を暖色シフト。[stage1_implementation_notes §4](./stage1_implementation_notes_v1.md#4-スタミナのカラーグレーディング54-への具体化)
+- ✅ **グリップカットのスロット管理 / ターゲット選択** — Stage 1 で確定。防御側 L/R に独立スロット、RS 符号で attacker 側を選択。[stage1_implementation_notes §1](./stage1_implementation_notes_v1.md#1-カット試行cut-attemptのスロット管理)
+- ✅ **カウンター窓の技カタログ** — Stage 1 で M1 scope を `SCISSOR_COUNTER` + `TRIANGLE_EARLY_STACK` の 2 種に確定。[stage1_implementation_notes §2](./stage1_implementation_notes_v1.md#2-カウンター窓counter-windowの技カタログ)
+
+### 継続未決（M1 プレイテスト後）
+
+- ⏳ **`posture_break` の各係数 `K*`（§3.3）の数値確定** — Stage 1 は仮値で動作。腰入力 / グリップ引き / 防御側戻し / 時間減衰の相対比は人間プレイで調整が必要
+- ⏳ **`LOCKING` 中に相手が前傾しなかった場合の追加挙動** — Stage 1 は即 UNLOCKED に戻る単純動作。連打抑制要否は playtest で判断
+- ⏳ **判断窓 `OPEN` 中に複数候補から選ばせる UI/プロンプト仕様** — Stage 1 は debug HUD の `candidates` 行で済ませているが、Stage 2 の HUD なし制約下での提示は未設計
