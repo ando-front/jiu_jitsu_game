@@ -58,10 +58,13 @@ dist/
 .vite/
 *.tsbuildinfo
 
-# Large binary assets (track with Git LFS instead)
-# *.fbx
-# *.uasset
-# *.umap
+# Large binary assets — tracked via Git LFS (see .gitattributes).
+# Do NOT gitignore these patterns: LFS stores the pointer in git and
+# the blob out-of-band. Ignoring them would break the tracking.
+#   *.fbx  *.uasset  *.umap  *.wav  *.exr  *.hdr  *.mp4
+
+# UE5 generated solution / workspace files
+*.sln
 
 # Temporary
 *.tmp

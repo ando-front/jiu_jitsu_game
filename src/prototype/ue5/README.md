@@ -1,7 +1,12 @@
 # Stage 2 UE5 プロジェクト
 
-**状態**: **scaffold 未実施**。本フォルダは将来の UE5 プロジェクトルート予定地。
-現時点では README のみ(UE5 プロジェクトを git に入れる際の衝突を避けるため)。
+**状態 (2026-04-21)**: **最小足場 + HandFSM port 着手**。
+- `BJJSimulator/` に `.uproject` / `Source/` / `Config/` が置かれ、Epic Launcher や `UnrealBuildTool` で開ける状態
+- `Source/BJJSimulator/Public/Core/BJJCoreTypes.h` に共有 enum 一式
+- `Source/BJJSimulator/Public/State/BJJHandFSM.h` + `Private/State/BJJHandFSM.cpp` で HandFSM を Stage 1 から直訳済み
+- `Source/BJJSimulator/Private/Tests/BJJHandFSMTest.cpp` に Stage 1 Vitest の主要 14 ケース中 11 ケースを Automation Test として写経
+
+残タスクは [docs/design/stage2_port_plan_v1.md](../../../docs/design/stage2_port_plan_v1.md) §1 の表に沿って FootFSM → PostureBreak → … の順で続行。
 
 **着手前に必ず読むもの**:
 - [docs/design/stage2_port_plan_v1.md](../../../docs/design/stage2_port_plan_v1.md) — TS → C++ のファイル対応表、型変換、実装順序
