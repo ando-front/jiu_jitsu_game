@@ -1,4 +1,12 @@
-# Stage 2 UE5 移植計画 v1.1
+# Stage 2 UE5 移植計画 v1.1 — DEPRECATED (2026-04-23)
+
+> ⚠️ この計画は **廃止** されました。Stage 2 のエンジンは Unity に変更されています。
+> 現行の計画は [`stage2_port_plan_v1.md`](./stage2_port_plan_v1.md) を参照。
+>
+> 本ドキュメントは「UE5 だったらこうする予定だった」という履歴として保存。
+> 型変換パターン(sentinel / public state pattern / 時刻 int64 化)等の
+> 設計意図は Unity 版にも引き継がれているので、根拠が知りたいときの
+> 参考資料として有用です。
 
 **前提**:
 - [architecture_overview_v1.md §4](./architecture_overview_v1.md) — 型と層の対応表
