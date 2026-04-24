@@ -93,4 +93,23 @@ namespace BJJSimulator
     {
         public const long SentinelTimeMs = long.MinValue;
     }
+
+    // -------------------------------------------------------------------------
+    // 2-D float vector. Mirrors Vec2 from src/prototype/web/src/state/game_state.ts.
+    // Used by PostureBreak, ControlLayer, and GameState for (lateral, sagittal)
+    // posture coordinates and grip-pull direction vectors.
+    // -------------------------------------------------------------------------
+
+    public struct Vec2
+    {
+        public float X;
+        public float Y;
+
+        public Vec2(float x, float y) { X = x; Y = y; }
+
+        /// <summary>Euclidean magnitude.</summary>
+        public float Magnitude => (float)System.Math.Sqrt(X * X + Y * Y);
+
+        public static readonly Vec2 Zero = new Vec2(0f, 0f);
+    }
 }
