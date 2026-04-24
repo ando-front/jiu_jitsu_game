@@ -18,8 +18,11 @@ session log, interview sheet). Running the sessions is a human task —
 青帯3名 + 白帯3名をリクルートして実施。See
 [docs/m0_paper_prototype/README.md](docs/m0_paper_prototype/README.md).
 
-**Stage 2 (UE5)** is not yet scaffolded. The file-by-file TS → C++ port
-plan is captured in [docs/design/stage2_port_plan_v1.md](docs/design/stage2_port_plan_v1.md).
+**Stage 2 (Unity 6)** scaffold is complete. The project lives in
+[src/prototype/unity/](src/prototype/unity/) and runs on Apple Silicon (macOS)
+and Windows PC without an RTX GPU requirement. `BJJCoreTypes.cs`, `HandFSM.cs`,
+and a full NUnit EditMode test suite are committed. The file-by-file TS → C#
+port plan is in [docs/design/stage2_port_plan_v1.md](docs/design/stage2_port_plan_v1.md).
 
 ## Project Structure
 
@@ -31,14 +34,16 @@ docs/
     input_system_defense_v1.md      # Defender input
     state_machines_v1.md            # HandFSM, FootFSM, posture_break, ...
     opponent_ai_v1.md               # AI priority tables
-    stage2_port_plan_v1.md          # TS → UE5 C++ port map
+    stage2_port_plan_v1.md          # TS → Unity C# port plan (current)
+    stage2_port_plan_ue5_deprecated_v1.md  # UE5 plan (archived)
     stage1_implementation_notes_v1.md  # Stage 1-time design decisions
   visual/              # Visual Pillar Document, art direction
   m0_paper_prototype/  # M0 session protocol + printable materials
 src/
   prototype/
     web/               # Stage 1 HTML/TypeScript prototype (Vite + Three.js + Vitest)
-    ue5/               # Stage 2 UE5 project (README only; not scaffolded)
+    unity/             # Stage 2 Unity 6 project (open in Unity Hub 6000.0 LTS)
+    ue5/               # DEPRECATED — see archive/ue5_abandoned/
 assets/
   mocap/, textures/, audio/   # Reserved for large binaries; empty today.
                               # LFS is NOT yet enabled (no .gitattributes).
