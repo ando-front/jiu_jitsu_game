@@ -64,24 +64,26 @@ namespace BJJSimulator.Platform
             // Sync role once per Update so prompt cycling shows up immediately.
             Provider.CurrentRole = Lifecycle.SelectedRole;
 
-            // Always poll hardware so meta keys (Pause, Tutorial, role cycle)
-            // see fresh edges.
-            Provider.PollHardware();
-
             // Compute real dt independent of Time.deltaTime so we can survive
             // long prompt/tutorial pauses (Stage 1 main.ts does the same with
-            // performance.now()).
-            double now    = NowMs();
-            float  realDt = (float)(now - _lastUpdateTimeMs);
+            // performance.now()). nowMs is also passed to PollHardware so the
+            // assembler's noisy-gamepad arbitration can timestamp keyboard
+            // activity.
+            long  now    = NowMs();
+            float realDt = (float)(now - _lastUpdateTimeMs);
             _lastUpdateTimeMs = now;
             // Cap absurd dt (eg first frame after a long alt-tab).
             if (realDt < 0f || realDt > 250f) realDt = 0f;
+
+            // Always poll hardware so meta keys (Pause, Tutorial, role cycle)
+            // see fresh edges.
+            Provider.PollHardware(now);
 
             // Sample one input frame so meta-key edges (BTN_PAUSE, BtnBase to
             // dismiss prompt, etc.) can be observed even when the sim isn't
             // advancing. Discard the intent — we only care about ButtonEdges.
             Provider.SetCurrentGameState(_simState.Game);
-            var (probe, _, _) = Provider.Sample((long)now);
+            var (probe, _, _) = Provider.Sample(now);
 
             switch (Lifecycle.CurrentPhase)
             {

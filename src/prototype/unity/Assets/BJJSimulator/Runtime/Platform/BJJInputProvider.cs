@@ -54,6 +54,35 @@ namespace BJJSimulator.Platform
         // Update (BJJGameManager calls this before FixedStepOps.Advance).
         private RawHardwareSnapshot _snapshot;
 
+        // Keyboard activity tracking — ports the lastEventMs / anyKeyHeld
+        // bookkeeping from src/prototype/web/src/input/keyboard.ts so the
+        // assembler's noisy-gamepad arbitration (LayerAOps.KbRecentMs) has
+        // a real signal to read.
+        private KeyboardSnapshot _kbPrev;
+        private long _kbLastEventMs = BJJConst.SentinelTimeMs;
+
+        private struct KeyboardSnapshot
+        {
+            public ButtonBit Buttons;
+            public bool LsUp, LsDown, LsLeft, LsRight;
+            public bool RsUp, RsDown, RsLeft, RsRight;
+            public bool LTrigger, RTrigger;
+
+            public bool AnyHeld =>
+                Buttons != ButtonBit.None ||
+                LsUp     || LsDown   || LsLeft   || LsRight   ||
+                RsUp     || RsDown   || RsLeft   || RsRight   ||
+                LTrigger || RTrigger;
+
+            public bool Equals(KeyboardSnapshot o) =>
+                Buttons  == o.Buttons  &&
+                LsUp     == o.LsUp     && LsDown   == o.LsDown   &&
+                LsLeft   == o.LsLeft   && LsRight  == o.LsRight  &&
+                RsUp     == o.RsUp     && RsDown   == o.RsDown   &&
+                RsLeft   == o.RsLeft   && RsRight  == o.RsRight  &&
+                LTrigger == o.LTrigger && RTrigger == o.RTrigger;
+        }
+
         // Cached InputAction references resolved from the asset.
         private InputAction _aLeftStick, _aRightStick;
         private InputAction _aLTrigger, _aRTrigger;
@@ -107,7 +136,7 @@ namespace BJJSimulator.Platform
         // sub-steps to share the same hardware snapshot.
         // ---------------------------------------------------------------------
 
-        public void PollHardware()
+        public void PollHardware(long nowMs)
         {
             if (_aLeftStick == null) return; // OnEnable failed; stay idle.
 
@@ -169,6 +198,20 @@ namespace BJJSimulator.Platform
                 if (kb.escapeKey.isPressed) kbBtns |= ButtonBit.BtnPause;
             }
 
+            var kbNow = new KeyboardSnapshot
+            {
+                Buttons  = kbBtns,
+                LsUp     = wDown, LsDown   = sDown,    LsLeft   = aDown,    LsRight  = dDown,
+                RsUp     = upDown, RsDown  = downDown, RsLeft   = leftDown, RsRight  = rightDown,
+                LTrigger = kb != null && kb.fKey.isPressed,
+                RTrigger = kb != null && kb.jKey.isPressed,
+            };
+            if (!kbNow.Equals(_kbPrev))
+            {
+                _kbLastEventMs = nowMs;
+                _kbPrev = kbNow;
+            }
+
             _snapshot = new RawHardwareSnapshot
             {
                 GamepadConnected = padConnected,
@@ -178,11 +221,13 @@ namespace BJJSimulator.Platform
                 GamepadRTrigger  = padRT,
                 GamepadButtons   = padBtns,
                 DeviceKind       = devKind,
-                LsUp = wDown, LsDown = sDown, LsLeft = aDown, LsRight = dDown,
-                RsUp = upDown, RsDown = downDown, RsLeft = leftDown, RsRight = rightDown,
-                KbLTrigger = kb != null && kb.fKey.isPressed,
-                KbRTrigger = kb != null && kb.jKey.isPressed,
-                KbButtons  = kbBtns,
+                LsUp = kbNow.LsUp, LsDown = kbNow.LsDown, LsLeft = kbNow.LsLeft, LsRight = kbNow.LsRight,
+                RsUp = kbNow.RsUp, RsDown = kbNow.RsDown, RsLeft = kbNow.RsLeft, RsRight = kbNow.RsRight,
+                KbLTrigger     = kbNow.LTrigger,
+                KbRTrigger     = kbNow.RTrigger,
+                KbButtons      = kbNow.Buttons,
+                KbAnyHeld      = kbNow.AnyHeld,
+                KbLastEventMs  = _kbLastEventMs,
             };
         }
 
@@ -200,6 +245,8 @@ namespace BJJSimulator.Platform
             _dDefState = LayerDDefenseState.Initial;
             _pendingAiBottom = null;
             _pendingAiTop    = null;
+            _kbPrev          = default;
+            _kbLastEventMs   = BJJConst.SentinelTimeMs;
         }
 
         // ---------------------------------------------------------------------
