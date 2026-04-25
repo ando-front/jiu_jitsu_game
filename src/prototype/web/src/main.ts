@@ -132,7 +132,11 @@ function toggleTutorial(): void {
   setTutorial(!tutorialIsOpen());
 }
 
-tutorialToggleBtn.addEventListener("click", toggleTutorial);
+tutorialToggleBtn.addEventListener("click", () => {
+  toggleTutorial();
+  // Same blur reason as the scenario bar — keep Space free for gameplay.
+  tutorialToggleBtn.blur();
+});
 // H / Esc / 1-5 on a global listener — deliberately outside the
 // game-input keyboard source so these meta-keys work even while the
 // role prompt or the end-overlay owns game input. Digits load practice
@@ -516,6 +520,10 @@ scenarioBarEl.addEventListener("click", (ev) => {
   } else {
     loadScenario(tag as ScenarioName);
   }
+  // Drop focus so subsequent Space presses go to gameplay, not to
+  // re-activating this button (browsers fire click on Space for the
+  // currently-focused button).
+  btn.blur();
 });
 
 // Cycle the coach target with [ / ] so the player can probe checklists
