@@ -24,6 +24,11 @@ import {
   buildScenario,
   type ScenarioName,
 } from "./state/scenarios.js";
+import {
+  buildChecklist,
+  SCENARIO_DEFAULT_TARGET,
+} from "./state/coach.js";
+import type { Technique } from "./state/judgment_window.js";
 import { breakBucket } from "./state/posture_break.js";
 import { advance, FIXED_STEP_MS, type FixedStepState } from "./sim/fixed_step.js";
 import { createScene } from "./scene/blockman.js";
@@ -34,6 +39,23 @@ const ROLE_CYCLE: readonly Role[] = ["Bottom", "Top", "Spectate"] as const;
 const canvas = document.getElementById("three-canvas") as HTMLCanvasElement;
 const hud = document.getElementById("debug-hud") as HTMLPreElement;
 const eventLogListEl = document.getElementById("event-log-list") as HTMLUListElement;
+const coachTargetEl = document.getElementById("coach-target") as HTMLElement;
+const coachListEl = document.getElementById("coach-list") as HTMLUListElement;
+const coachReadyEl = document.getElementById("coach-ready") as HTMLElement;
+const scenarioBarEl = document.getElementById("scenario-bar") as HTMLElement;
+
+// Coach: which technique the player is currently aiming for. Drives
+// the live checklist HUD. Defaults to SCISSOR_SWEEP (easiest M1 sweep);
+// loadScenario() retunes it via SCENARIO_DEFAULT_TARGET.
+const TECHNIQUE_ORDER: readonly Technique[] = [
+  "SCISSOR_SWEEP",
+  "FLOWER_SWEEP",
+  "TRIANGLE",
+  "OMOPLATA",
+  "HIP_BUMP",
+  "CROSS_COLLAR",
+] as const;
+let coachTarget: Technique = "SCISSOR_SWEEP";
 
 // -- Role prompt --------------------------------------------------------------
 // Per defense doc §F: one-shot full-screen text on boot, dismissed with A (BTN_BASE).
@@ -55,10 +77,19 @@ promptEl.innerHTML = `
     Nudge <b>LS left/right</b> or tap <b>A/D</b> to cycle BOTTOM → TOP → SPECTATE.<br>
     Press <b>[A] / Space</b> to start.
   </div>
-  <div style="font-size: 12px; opacity: 0.8; margin-top: 12px;
+  <div style="font-size: 12px; line-height: 1.7; max-width: 560px; margin-top: 8px;
+              padding: 12px 16px; border: 1px solid #6da080; border-radius: 6px;
+              background: rgba(40, 80, 60, 0.35); color: #d6f0e0;">
+    <b style="color:#c4f0d4;">★ はじめての方へ — 30秒で技を体験</b><br>
+    1. <b>Space</b> で BOTTOM を確定<br>
+    2. 開始後すぐ <b>[3]</b> キー(三角絞めシナリオ)<br>
+    3. 画面下の「次の技 — 条件チェック」を見ながら<b>F または J</b> を押す<br>
+    → 黄色く画面が光れば <b>判断窓</b>。<b>Space を 0.5秒ホールド</b>で技確定!
+  </div>
+  <div style="font-size: 12px; opacity: 0.8; margin-top: 4px;
               padding: 6px 14px; border: 1px solid #4e52a4; border-radius: 5px;
               background: rgba(32, 34, 56, 0.6);">
-    遊び方がわからない場合は <b>[H]</b> キー、または画面右下の
+    詳しい遊び方は <b>[H]</b> キー、または画面右下の
     <b>? チュートリアル</b> ボタンで日本語ガイドを表示できます。
   </div>
 `;
@@ -343,6 +374,7 @@ function restartSession() {
   lastDefense = null;
   eventLog.length = 0;
   activeScenario = null;
+  refreshScenarioBarActive(null);
   roundElapsedMs = 0;
   lastRafMs = performance.now();
   simState = Object.freeze({
@@ -372,6 +404,8 @@ function loadScenario(name: ScenarioName): void {
   eventLog.length = 0;
   activeScenario = name;
   roundElapsedMs = 0;
+  setCoachTarget(SCENARIO_DEFAULT_TARGET[name]);
+  refreshScenarioBarActive(name);
   const now = performance.now();
   lastRafMs = now;
   simState = Object.freeze({
@@ -380,6 +414,67 @@ function loadScenario(name: ScenarioName): void {
     game: buildScenario(name, now),
   });
 }
+
+function renderCoach(g: GameState): void {
+  const cl = buildChecklist(g, coachTarget);
+  coachTargetEl.textContent = `${cl.title} (${cl.technique})`;
+  const html: string[] = [];
+  for (const it of cl.items) {
+    const cls = it.met ? "met" : "miss";
+    const mark = it.met ? "✓" : "·";
+    html.push(
+      `<li class="${cls}">` +
+        `<span class="mark">${mark}</span>` +
+        `<span class="lbl">${escapeHtml(it.label)}</span>` +
+        (it.detail ? `<span class="det">${escapeHtml(it.detail)}</span>` : "") +
+        `</li>`,
+    );
+  }
+  coachListEl.innerHTML = html.join("");
+  // "条件成立" badge: hide once the window actually opens (the yellow
+  // flash conveys it more strongly than a static text).
+  const open = g.judgmentWindow.state === "OPEN" || g.judgmentWindow.state === "OPENING";
+  coachReadyEl.style.display = cl.allMet && !open ? "block" : "none";
+}
+
+function setCoachTarget(t: Technique): void {
+  coachTarget = t;
+}
+
+function refreshScenarioBarActive(name: ScenarioName | null): void {
+  const buttons = scenarioBarEl.querySelectorAll<HTMLButtonElement>("button[data-scenario]");
+  buttons.forEach((b) => {
+    const tag = b.getAttribute("data-scenario");
+    const isActive = tag !== "__reset" && tag === name;
+    b.classList.toggle("active", isActive);
+  });
+}
+
+scenarioBarEl.addEventListener("click", (ev) => {
+  const btn = (ev.target as HTMLElement).closest("button[data-scenario]") as HTMLButtonElement | null;
+  if (btn === null) return;
+  if (promptActive || tutorialIsOpen()) return;
+  const tag = btn.getAttribute("data-scenario");
+  if (tag === "__reset" || tag === null) {
+    restartSession();
+  } else {
+    loadScenario(tag as ScenarioName);
+  }
+});
+
+// Cycle the coach target with [ / ] so the player can probe checklists
+// for techniques other than the loaded scenario's default.
+window.addEventListener("keydown", (e) => {
+  if (promptActive || tutorialIsOpen() || paused) return;
+  const idx = TECHNIQUE_ORDER.indexOf(coachTarget);
+  if (e.code === "BracketLeft") {
+    setCoachTarget(TECHNIQUE_ORDER[(idx - 1 + TECHNIQUE_ORDER.length) % TECHNIQUE_ORDER.length]!);
+    e.preventDefault();
+  } else if (e.code === "BracketRight") {
+    setCoachTarget(TECHNIQUE_ORDER[(idx + 1) % TECHNIQUE_ORDER.length]!);
+    e.preventDefault();
+  }
+});
 
 function frame(now: number) {
   const realDt = now - lastRafMs;
@@ -588,6 +683,7 @@ function frame(now: number) {
     hud.textContent = renderHud(lastFrame, lastIntent, game, res.stepsRun);
   }
   renderEventLog(game.nowMs);
+  renderCoach(game);
   scene3d.render();
   requestAnimationFrame(frame);
 }

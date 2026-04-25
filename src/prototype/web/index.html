@@ -139,6 +139,120 @@
       #event-log .kPASS_FAILED { color: #ffb080; }
       #event-log .kSESSION_ENDED, #event-log .kGUARD_OPENED { color: #ff7070; }
       #event-log .args { color: #a8a8ac; }
+      /* --- Coach checklist (どうしたら技がかかるか) ------------------- */
+      #coach {
+        position: absolute;
+        left: 12px;
+        bottom: 60px;
+        width: 320px;
+        padding: 10px 12px;
+        background: rgba(10, 12, 22, 0.78);
+        border: 1px solid #3a3f6a;
+        border-radius: 6px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: #d8dcf0;
+        pointer-events: none;
+        z-index: 25;
+      }
+      #coach .head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 6px;
+      }
+      #coach h3 {
+        margin: 0;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        color: #9ea0ff;
+        text-transform: uppercase;
+      }
+      #coach .target {
+        font-size: 13px;
+        font-weight: 600;
+        color: #f2e6a6;
+      }
+      #coach .switcher {
+        font-size: 10px;
+        color: #8d90a8;
+        margin-top: 2px;
+        margin-bottom: 6px;
+      }
+      #coach ul { margin: 0; padding: 0; list-style: none; }
+      #coach li {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        padding: 2px 0;
+      }
+      #coach li .mark { width: 14px; flex: 0 0 14px; text-align: center; }
+      #coach li .lbl { flex: 1 1 auto; }
+      #coach li .det { color: #8d90a8; font-size: 10px; white-space: nowrap; }
+      #coach li.met .mark { color: #88e0a0; }
+      #coach li.miss .mark { color: #e88a5c; }
+      #coach li.met .lbl { color: #b8dcc4; }
+      #coach li.miss .lbl { color: #e6e8f0; }
+      #coach .ready {
+        margin-top: 6px;
+        padding: 4px 8px;
+        background: rgba(120, 180, 100, 0.18);
+        border: 1px solid #6da080;
+        border-radius: 4px;
+        color: #c4f0d4;
+        font-size: 11px;
+        text-align: center;
+        letter-spacing: 0.05em;
+      }
+      /* --- Scenario picker (画面下部の技選択チップ) -------------------- */
+      #scenario-bar {
+        position: absolute;
+        bottom: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        justify-content: center;
+        max-width: 70vw;
+        padding: 6px 10px;
+        background: rgba(10, 12, 22, 0.7);
+        border: 1px solid #3a3f6a;
+        border-radius: 8px;
+        z-index: 25;
+      }
+      #scenario-bar .lbl {
+        font-size: 10px;
+        color: #8d90a8;
+        letter-spacing: 0.08em;
+        align-self: center;
+        margin-right: 4px;
+      }
+      #scenario-bar button {
+        font: inherit;
+        font-size: 11px;
+        padding: 4px 8px;
+        background: rgba(40, 44, 78, 0.85);
+        color: #d8dcf0;
+        border: 1px solid #4e52a4;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      #scenario-bar button:hover { background: rgba(60, 64, 110, 0.95); }
+      #scenario-bar button.active {
+        background: rgba(120, 100, 180, 0.55);
+        border-color: #c8b4ff;
+        color: #fff;
+      }
+      #scenario-bar button .key {
+        display: inline-block;
+        margin-right: 4px;
+        padding: 0 4px;
+        background: rgba(0, 0, 0, 0.35);
+        border-radius: 3px;
+        color: #f2e6a6;
+        font-size: 10px;
+      }
       /* --- Tutorial overlay (日本語) ---------------------------------- */
       #tutorial-toggle {
         position: absolute;
@@ -309,6 +423,30 @@
       <div id="event-log">
         <h3>Event log</h3>
         <ul id="event-log-list"></ul>
+      </div>
+
+      <div id="coach">
+        <div class="head">
+          <h3>次の技 — 条件チェック</h3>
+          <span id="coach-target" class="target">SCISSOR_SWEEP</span>
+        </div>
+        <div class="switcher">下のチップで技を切替 / 1–7 で練習シナリオ</div>
+        <ul id="coach-list"></ul>
+        <div id="coach-ready" class="ready" style="display:none;">
+          条件成立 → 判断窓が開きます
+        </div>
+      </div>
+
+      <div id="scenario-bar">
+        <span class="lbl">PRACTICE</span>
+        <button data-scenario="SCISSOR_READY"><span class="key">1</span>ハサミ</button>
+        <button data-scenario="FLOWER_READY"><span class="key">2</span>フラワー</button>
+        <button data-scenario="TRIANGLE_READY"><span class="key">3</span>三角</button>
+        <button data-scenario="OMOPLATA_READY"><span class="key">4</span>オモプラ</button>
+        <button data-scenario="HIP_BUMP_READY"><span class="key">5</span>ヒップバンプ</button>
+        <button data-scenario="CROSS_COLLAR_READY"><span class="key">6</span>十字</button>
+        <button data-scenario="PASS_DEFENSE"><span class="key">7</span>パス防御</button>
+        <button data-scenario="__reset"><span class="key">0</span>対戦</button>
       </div>
 
       <div id="pause-overlay" role="dialog" aria-modal="true"
