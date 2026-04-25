@@ -215,4 +215,100 @@ namespace BJJSimulator.Tests
             Assert.AreEqual(ButtonBit.None,    f2.Buttons     & ButtonBit.BtnBase);
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Noisy-gamepad arbitration (§A.4 — KbRecentMs tie-breaker).
+    //
+    // Mirrors the kbActive logic in src/prototype/web/src/input/layerA.ts so
+    // that a broken IR remote pinning axes at -1 (or a controller with a
+    // dead-zone-broken stick) cannot silently lock keyboard input out.
+    // -------------------------------------------------------------------------
+
+    [TestFixture]
+    public class LayerANoisyGamepadTests
+    {
+        private static RawHardwareSnapshot NoisyPad(
+            bool      kbAnyHeld     = false,
+            long      kbLastEventMs = BJJConst.SentinelTimeMs,
+            ButtonBit kbButtons     = ButtonBit.None,
+            bool      lsRight       = false) => new RawHardwareSnapshot
+        {
+            // Pad reports activity continuously (stick pinned, well past 0.2).
+            GamepadConnected = true,
+            GamepadLs        = new Vec2(-1f, 0f),
+            DeviceKind       = DeviceKind.Xbox,
+            // Keyboard truth.
+            LsRight          = lsRight,
+            KbButtons        = kbButtons,
+            KbAnyHeld        = kbAnyHeld,
+            KbLastEventMs    = kbLastEventMs,
+        };
+
+        // While any tracked key is currently held, the noisy gamepad must lose
+        // — independent of how recent kbLastEventMs is.
+        [Test]
+        public void HeldKeyboardWinsOverNoisyGamepad()
+        {
+            var hw = NoisyPad(kbAnyHeld: true, kbButtons: ButtonBit.BtnBase, lsRight: true);
+            var (frame, _) = LayerAOps.Assemble(LayerAState.Initial, hw, 0L);
+
+            Assert.AreEqual(DeviceKind.Keyboard, frame.DeviceKind);
+            Assert.AreEqual(1f, frame.Ls.X, 1e-5f, "Keyboard LsRight should win.");
+            Assert.AreNotEqual(ButtonBit.None, frame.Buttons & ButtonBit.BtnBase);
+        }
+
+        // No key currently held but a tracked event happened within KbRecentMs
+        // → keyboard still wins (covers the "user just released a key" frame).
+        [Test]
+        public void RecentKeyboardEventWinsOverNoisyGamepad()
+        {
+            // Event at t=500, sample at t=1000 → 500ms ago, well inside 1500.
+            var hw = NoisyPad(kbAnyHeld: false, kbLastEventMs: 500L);
+            var (frame, _) = LayerAOps.Assemble(LayerAState.Initial, hw, 1000L);
+
+            Assert.AreEqual(DeviceKind.Keyboard, frame.DeviceKind);
+            // Pad LS would be -1 after deadzone+curve; keyboard path produces 0.
+            Assert.AreEqual(0f, frame.Ls.X, 1e-5f);
+        }
+
+        // Once the keyboard has been quiet for >= KbRecentMs, the gamepad
+        // wins again — otherwise releasing the keyboard would silence the pad
+        // forever.
+        [Test]
+        public void StaleKeyboardLetsGamepadWinAgain()
+        {
+            // Last keyboard event at t=0, sample at t=2000 → 2000ms gap > 1500.
+            var hw = NoisyPad(kbAnyHeld: false, kbLastEventMs: 0L);
+            var (frame, _) = LayerAOps.Assemble(LayerAState.Initial, hw, 2000L);
+
+            Assert.AreEqual(DeviceKind.Xbox, frame.DeviceKind);
+            // Pad LS x = -1 raw → after deadzone+curve still negative (x ≈ -1).
+            Assert.Less(frame.Ls.X, 0f, "Gamepad LS should drive the frame.");
+        }
+
+        // Sentinel kbLastEventMs (no event ever seen) must NOT be treated as
+        // "recent" — without the guard a (nowMs - long.MinValue) overflow
+        // would yield a tiny positive number and lock the gamepad out.
+        [Test]
+        public void SentinelKbLastEventDoesNotBlockGamepad()
+        {
+            var hw = NoisyPad(
+                kbAnyHeld:     false,
+                kbLastEventMs: BJJConst.SentinelTimeMs);
+            var (frame, _) = LayerAOps.Assemble(LayerAState.Initial, hw, 1_000_000L);
+
+            Assert.AreEqual(DeviceKind.Xbox, frame.DeviceKind);
+        }
+
+        // Boundary: exactly KbRecentMs since last event → gamepad wins
+        // (the comparison is strict `<`, so equal is "stale").
+        [Test]
+        public void ExactlyKbRecentMsBoundaryFlipsToGamepad()
+        {
+            var hw = NoisyPad(kbAnyHeld: false, kbLastEventMs: 0L);
+            var (frame, _) = LayerAOps.Assemble(LayerAState.Initial, hw, LayerAOps.KbRecentMs);
+
+            Assert.AreEqual(DeviceKind.Xbox, frame.DeviceKind);
+        }
+    }
 }

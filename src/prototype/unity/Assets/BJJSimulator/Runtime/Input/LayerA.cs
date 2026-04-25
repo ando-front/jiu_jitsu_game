@@ -37,6 +37,13 @@ namespace BJJSimulator
         public bool RsUp, RsDown, RsLeft, RsRight;
         public bool KbLTrigger, KbRTrigger;
         public ButtonBit KbButtons;
+
+        // Keyboard activity hints — used by the assembler to ignore a noisy
+        // gamepad while the human is actually typing. KbLastEventMs uses the
+        // BJJConst.SentinelTimeMs sentinel for "no event seen yet"; guard any
+        // subtraction with `!= SentinelTimeMs` to avoid overflow.
+        public bool KbAnyHeld;
+        public long KbLastEventMs;
     }
 
     // -------------------------------------------------------------------------
@@ -59,6 +66,13 @@ namespace BJJSimulator
 
     public static class LayerAOps
     {
+        // Keyboard wins over the gamepad for at least this long after any
+        // tracked-key event. Mirrors KB_RECENT_MS in
+        // src/prototype/web/src/input/layerA.ts §A.4 — picked to outlast a
+        // single rAF / Update tick but not so long that releasing the
+        // keyboard leaves the pad ignored forever.
+        public const long KbRecentMs = 1500L;
+
         /// <summary>
         /// Build one InputFrame from the current hardware snapshot.
         /// Returns the new frame AND the updated LayerAState (prevButtons).
@@ -68,7 +82,17 @@ namespace BJJSimulator
             RawHardwareSnapshot hw,
             long nowMs)
         {
-            bool useGamepad = hw.GamepadConnected &&
+            // Tie-breaker: if the keyboard is currently held OR was touched
+            // within KbRecentMs, ignore the gamepad even if it reports
+            // activity. Protects against noisy IR remotes / dead-zone-broken
+            // pads that pin axes at -1 and would otherwise lock keyboard
+            // input out forever.
+            bool kbActive =
+                hw.KbAnyHeld ||
+                (hw.KbLastEventMs != BJJConst.SentinelTimeMs &&
+                 (nowMs - hw.KbLastEventMs) < KbRecentMs);
+
+            bool useGamepad = hw.GamepadConnected && !kbActive &&
                 InputTransform.GamepadHasActivity(
                     hw.GamepadLs, hw.GamepadRs, hw.GamepadLTrigger, hw.GamepadRTrigger, hw.GamepadButtons);
 

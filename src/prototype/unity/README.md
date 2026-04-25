@@ -136,12 +136,6 @@ Editor menu item, or wait for the next iteration.
   asset. Use the Lifecycle API directly until then.
 - **Round timer length**: editable in `BJJGameManager` Inspector (default 5
   min, matches IBJJF adult white/blue belt).
-- **Noisy-gamepad keyboard lockout**: Stage 1 has the
-  `kbActive`-priority workaround in `LayerA`; Stage 2 currently does not.
-  If your environment has a phantom gamepad (e.g. an Amazon IR remote
-  reporting axes pinned at -1), keyboard input will be ignored. Fix is to
-  port the same arbitration into `Runtime/Input/LayerA.cs` — tracked as a
-  follow-up task.
 
 ## Unity MCP integration (Editor automation from Claude Code)
 
