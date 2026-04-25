@@ -44,14 +44,26 @@ namespace BJJSimulator
     {
         public float     AccumulatorMs;
         public long      SimClockMs;
+        // Sub-millisecond residue carried between Advance() calls so the long
+        // SimClockMs doesn't drift relative to a true fixedDt of 1000/60 ≈
+        // 16.6667 ms. Without this, `simClock += (long)16.6667` truncates to
+        // 16 per step (3.7% slow), accumulating 40 ms of slip per wall second
+        // and silently pulling round timer / stamina / judgment-window timing
+        // off the Stage 1 reference. Stage 1 (TS) keeps the clock as
+        // float64 ms so this field is the C#-side equivalent. See
+        // docs/design/stage2_port_plan_v1.md §2.4 — the public clock stays
+        // `long` (predictable comparison semantics, no FP equality bugs); the
+        // residue is a private accumulator only.
+        public double    SimClockFracMs;
         public GameState Game;
 
         public static FixedStepState Initial(long startMs, GameState game) =>
             new FixedStepState
             {
-                AccumulatorMs = 0f,
-                SimClockMs    = startMs,
-                Game          = game,
+                AccumulatorMs  = 0f,
+                SimClockMs     = startMs,
+                SimClockFracMs = 0.0,
+                Game           = game,
             };
     }
 
@@ -85,16 +97,30 @@ namespace BJJSimulator
             if (fixedDtMs <= 0f) fixedDtMs = FixedStepMs;
             if (maxSteps  <= 0)  maxSteps  = MaxStepsPerAdvance;
 
-            var   events   = new List<SimEvent>(8);
-            float acc      = prev.AccumulatorMs + realDtMs;
-            long  simClock = prev.SimClockMs;
-            var   game     = prev.Game;
-            int   steps    = 0;
+            var    events    = new List<SimEvent>(8);
+            float  acc       = prev.AccumulatorMs + realDtMs;
+            long   simClock  = prev.SimClockMs;
+            double clockFrac = prev.SimClockFracMs;
+            // Sub-ms increment computed in double to avoid float rounding
+            // (1000f/60f as float = 16.66666603…, so 3× steps land on
+            // 49.99999809 and floor to 49 instead of 50). Done as 1000.0/60.0
+            // directly so the value matches the Stage 1 TS reference.
+            double fixedDtPrecise = (fixedDtMs == FixedStepMs)
+                ? 1000.0 / 60.0
+                : (double)fixedDtMs;
+            var    game      = prev.Game;
+            int    steps     = 0;
 
             while (acc >= fixedDtMs && steps < maxSteps)
             {
                 steps++;
-                simClock += (long)fixedDtMs;
+                // Carry sub-ms residue so 16.6667 + 16.6667 + 16.6667 lands
+                // on 50, not 48. Public clock stays `long`; only the carry
+                // is a double.
+                clockFrac += fixedDtPrecise;
+                long whole = (long)clockFrac;
+                simClock  += whole;
+                clockFrac -= whole;
 
                 var (frame, intent, defense) = provider.Sample(simClock);
                 float timeScale  = game.Time.Scale;
@@ -126,9 +152,10 @@ namespace BJJSimulator
             {
                 Next = new FixedStepState
                 {
-                    AccumulatorMs = acc,
-                    SimClockMs    = simClock,
-                    Game          = game,
+                    AccumulatorMs  = acc,
+                    SimClockMs     = simClock,
+                    SimClockFracMs = clockFrac,
+                    Game           = game,
                 },
                 Events   = events.ToArray(),
                 StepsRun = steps,

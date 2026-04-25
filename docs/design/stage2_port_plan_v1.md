@@ -1,6 +1,7 @@
-# Stage 2 Unity 移植計画 v1.0
+# Stage 2 Unity 移植計画 v1.1
 
 **作成日**: 2026-04-24
+**改訂日**: 2026-04-25 (実態調査により §3 を最新化)
 **対象エンジン**: Unity 6 (6000.0 LTS)
 **前提**:
 - [architecture_overview_v1.md §4](./architecture_overview_v1.md) — 型と層の対応表
@@ -174,11 +175,37 @@ bool recentlyParried = hasParryMemory && (nowMs - prev.LastParriedAtMs) < t.Shor
 
 ## 3. 次の作業単位 (小さい順)
 
-1. **FootFSM** port + テスト (`Runtime/State/FootFSM.cs` + `Tests/EditMode/FootFSMTest.cs`)
-2. **PostureBreak** port (`Runtime/State/PostureBreak.cs` — `Vector2` + decay)
-3. **Stamina / ArmExtracted** port
-4. **InputFrame / Intent STRUCT 定義** (`Runtime/Input/BJJInputFrame.cs`, `BJJIntent.cs`)
-5. **GameState 集約** + `Step` (FSM 群依存; 他が揃ってから)
+**現状 (2026-04-25)**: コアロジック (state / input / sim / AI) の C# port は
+すべて 🟢。**残りは「実装はあるがテストが無い」6 ファイルの NUnit テスト追加**
+と、それ以降の Unity 固有作業 (シーン / ビジュアル / GameManager) のみ。
+
+### 3.1 単体テスト負債 (合計 ~80 ケース)
+
+| 優先 | C# 実装 | TS テスト原本 | ケース数 |
+|---|---|---|---|
+| 1 | `Runtime/State/CutAttempt.cs` | `tests/unit/cut_attempt.test.ts` | 10 |
+| 2 | `Runtime/State/PassAttempt.cs` | `tests/unit/pass_attempt.test.ts` | 11 |
+| 3 | `Runtime/Input/LayerA.cs` | `tests/unit/layerA.test.ts` (assembler 部分) | 17 |
+| 4 | `Runtime/Input/LayerBDefense.cs` | `tests/unit/layerB_defense.test.ts` | 23 |
+| 5 | `Runtime/Sim/FixedStep.cs` | `tests/unit/fixed_step.test.ts` | 6 |
+| 6 | `Runtime/AI/OpponentAI.cs` | `tests/unit/opponent_ai.test.ts` | 18 |
+
+各ケースは `[Test]` メソッドとして `Tests/EditMode/XxxTest.cs` に追加する。
+HandFSMTest.cs と同じ NUnit + AAA スタイルを踏襲。
+
+### 3.2 結合テスト (シナリオ層)
+
+`tests/scenario/*.test.ts` (6 ファイル, ~33 ケース) は GameState を一巡させる
+スモークテスト。Unity 側でも `Tests/EditMode/Scenario/*.cs` として追加するが、
+3.1 完了後でよい。
+
+### 3.3 Unity 固有 (テスト負債解消後)
+
+1. `GameManager` MonoBehaviour — `main.ts` の rAF ループを `Update` に分解
+2. New Input System の `BJJInputActions.inputactions` 定義 + `LayerA` への wire
+3. Skinned mesh + Animator (Stage 1 blockman 相当)
+4. URP Volume profile — stamina warm shift / judgment-window vignette
+5. UI Toolkit でコーチ HUD / イベントログ移植
 
 ---
 
