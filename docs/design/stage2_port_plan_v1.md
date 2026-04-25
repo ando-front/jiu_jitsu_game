@@ -41,25 +41,25 @@ URP PostProcess 等)。それらはコアロジック port 完了後に個別設
 | Stage 1 ソース | Stage 2 出力 | 状態 |
 |---|---|---|
 | `state/hand_fsm.ts` | `Runtime/State/HandFSM.cs` (`HandFSM` struct + `HandFSMOps`) | 🟢 |
-| `state/foot_fsm.ts` | `Runtime/State/FootFSM.cs` | ⚪ |
-| `state/posture_break.ts` | `Runtime/State/PostureBreak.cs` | ⚪ |
-| `state/stamina.ts` | `Runtime/State/Stamina.cs` | ⚪ |
-| `state/arm_extracted.ts` | `Runtime/State/ArmExtracted.cs` | ⚪ |
-| `state/judgment_window.ts` | `Runtime/State/JudgmentWindow.cs` | ⚪ |
-| `state/counter_window.ts` | `Runtime/State/CounterWindow.cs` | ⚪ |
-| `state/pass_attempt.ts` | `Runtime/State/PassAttempt.cs` | ⚪ |
-| `state/cut_attempt.ts` | `Runtime/State/CutAttempt.cs` | ⚪ |
-| `state/control_layer.ts` | `Runtime/State/ControlLayer.cs` | ⚪ |
-| `state/game_state.ts` | `Runtime/State/GameState.cs` | ⚪ |
+| `state/foot_fsm.ts` | `Runtime/State/FootFSM.cs` | 🟢 |
+| `state/posture_break.ts` | `Runtime/State/PostureBreak.cs` | 🟢 |
+| `state/stamina.ts` | `Runtime/State/Stamina.cs` | 🟢 |
+| `state/arm_extracted.ts` | `Runtime/State/ArmExtracted.cs` | 🟢 |
+| `state/judgment_window.ts` | `Runtime/State/JudgmentWindow.cs` | 🟢 |
+| `state/counter_window.ts` | `Runtime/State/CounterWindow.cs` | 🟢 |
+| `state/pass_attempt.ts` | `Runtime/State/PassAttempt.cs` | 🟢 |
+| `state/cut_attempt.ts` | `Runtime/State/CutAttempt.cs` | 🟢 |
+| `state/control_layer.ts` | `Runtime/State/ControlLayer.cs` | 🟢 |
+| `state/game_state.ts` | `Runtime/State/GameState.cs` | 🟢 |
 | `state/scenarios.ts` | `Runtime/State/Scenarios.cs` | ⚪ |
 
 ### 1.4 入力層
 
 | Stage 1 ソース | Stage 2 出力 | 状態 |
 |---|---|---|
-| `input/types.ts` | `Runtime/Input/BJJInputFrame.cs` (`InputFrame` struct) | ⚪ |
-| `input/intent.ts` | `Runtime/Input/BJJIntent.cs` | ⚪ |
-| `input/intent_defense.ts` | `Runtime/Input/BJJDefenseIntent.cs` | ⚪ |
+| `input/types.ts` | `Runtime/Input/BJJInputFrame.cs` (`InputFrame` struct) | 🟢 |
+| `input/intent.ts` | `Runtime/Input/BJJIntent.cs` | 🟢 |
+| `input/intent_defense.ts` | `Runtime/Input/BJJDefenseIntent.cs` | 🟢 |
 | `input/layerA.ts` | `Runtime/Input/LayerA.cs` (New Input System wrapper) | ⚪ |
 | `input/layerB.ts` | `Runtime/Input/LayerB.cs` | ⚪ |
 | `input/layerB_defense.ts` | `Runtime/Input/LayerBDefense.cs` | ⚪ |
@@ -93,7 +93,14 @@ Stage 1 には Three.js 相当ロジックが含まれるが、Stage 2 では Un
 | Stage 1 suite | Stage 2 テスト | 状態 |
 |---|---|---|
 | `tests/unit/hand_fsm.test.ts` (14 ケース) | `Tests/EditMode/HandFSMTest.cs` | 🟢 |
-| 他 `tests/unit/*.test.ts` (13 ファイル) | — | ⚪ |
+| `tests/unit/foot_fsm.test.ts` | `Tests/EditMode/FootFSMTest.cs` | 🟢 |
+| `tests/unit/posture_break.test.ts` | `Tests/EditMode/PostureBreakTest.cs` | 🟢 |
+| `tests/unit/stamina.test.ts` | `Tests/EditMode/StaminaTest.cs` | 🟢 |
+| `tests/unit/arm_extracted.test.ts` | `Tests/EditMode/ArmExtractedTest.cs` | 🟢 |
+| `tests/unit/judgment_window.test.ts` | `Tests/EditMode/JudgmentWindowTest.cs` | 🟢 |
+| `tests/unit/counter_window.test.ts` | `Tests/EditMode/CounterWindowTest.cs` | 🟢 |
+| `tests/unit/control_layer.test.ts` | `Tests/EditMode/ControlLayerTest.cs` | 🟢 |
+| 他 `tests/unit/*.test.ts` (pass/cut — 未テスト) | — | ⚪ |
 | `tests/scenario/*.test.ts` (6 ファイル) | — (GameState port 後) | ⚪ |
 
 ---

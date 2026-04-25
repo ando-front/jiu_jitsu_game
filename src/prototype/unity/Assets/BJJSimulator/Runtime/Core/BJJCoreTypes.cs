@@ -93,4 +93,24 @@ namespace BJJSimulator
     {
         public const long SentinelTimeMs = long.MinValue;
     }
+
+    // -------------------------------------------------------------------------
+    // 2-D vector used by PostureBreak and callers that pass grip-pull directions.
+    // Kept engine-agnostic (no UnityEngine.Vector2) so pure-logic tests run
+    // without a Unity host.
+    // -------------------------------------------------------------------------
+
+    public struct Vec2
+    {
+        public float X;
+        public float Y;
+
+        public Vec2(float x, float y) { X = x; Y = y; }
+
+        public static readonly Vec2 Zero = new Vec2(0f, 0f);
+
+        public float Magnitude => (float)System.Math.Sqrt(X * X + Y * Y);
+
+        public override string ToString() => $"({X}, {Y})";
+    }
 }
