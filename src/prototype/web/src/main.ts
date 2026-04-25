@@ -769,6 +769,8 @@ let lastPromptLsX = 0;
 function runPromptTick() {
   const f = layerA.sample(performance.now());
   lastFrame = f;
+  // TEMP DEBUG
+  (window as any).__lastF = f;
   const crossedLeft = lastPromptLsX > -0.6 && f.ls.x <= -0.6;
   const crossedRight = lastPromptLsX < 0.6 && f.ls.x >= 0.6;
   if (crossedLeft) {
