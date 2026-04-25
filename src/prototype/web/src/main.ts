@@ -415,6 +415,62 @@ function loadScenario(name: ScenarioName): void {
   });
 }
 
+// §D2 — input live-view: paints LS/triggers/buttons into the bar HUD
+// every rAF so a player can see exactly which input the engine sees.
+const ilLsxEl = document.getElementById("il-lsx") as HTMLElement;
+const ilLsyEl = document.getElementById("il-lsy") as HTMLElement;
+const ilLsxVEl = document.getElementById("il-lsx-v") as HTMLElement;
+const ilLsyVEl = document.getElementById("il-lsy-v") as HTMLElement;
+const ilRsxEl = document.getElementById("il-rsx") as HTMLElement;
+const ilRsyEl = document.getElementById("il-rsy") as HTMLElement;
+const ilRsxVEl = document.getElementById("il-rsx-v") as HTMLElement;
+const ilRsyVEl = document.getElementById("il-rsy-v") as HTMLElement;
+const ilLtEl = document.getElementById("il-lt") as HTMLElement;
+const ilRtEl = document.getElementById("il-rt") as HTMLElement;
+const ilLtVEl = document.getElementById("il-lt-v") as HTMLElement;
+const ilRtVEl = document.getElementById("il-rt-v") as HTMLElement;
+const ilPillsEl = document.getElementById("il-pills") as HTMLElement;
+
+const PILL_LABELS: ReadonlyArray<{ bit: number; label: string }> = [
+  { bit: ButtonBit.BTN_BASE,     label: "Space" },
+  { bit: ButtonBit.BTN_RELEASE,  label: "X" },
+  { bit: ButtonBit.BTN_BREATH,   label: "C" },
+  { bit: ButtonBit.BTN_RESERVED, label: "V" },
+  { bit: ButtonBit.L_BUMPER,     label: "R" },
+  { bit: ButtonBit.R_BUMPER,     label: "U" },
+];
+
+function paintSignedBar(el: HTMLElement, v: number): void {
+  // v in [-1, 1]; bar is 50% centered, fill spans from center to value.
+  const clamped = Math.max(-1, Math.min(1, v));
+  const widthPct = Math.abs(clamped) * 50;
+  const leftPct = clamped >= 0 ? 50 : 50 - widthPct;
+  el.style.left = `${leftPct}%`;
+  el.style.width = `${widthPct}%`;
+  el.style.background = clamped >= 0 ? "#6fd0ff" : "#f2cf5c";
+}
+
+function renderInputLive(f: InputFrame): void {
+  paintSignedBar(ilLsxEl, f.ls.x);
+  paintSignedBar(ilLsyEl, f.ls.y);
+  ilLsxVEl.textContent = f.ls.x.toFixed(2);
+  ilLsyVEl.textContent = f.ls.y.toFixed(2);
+  paintSignedBar(ilRsxEl, f.rs.x);
+  paintSignedBar(ilRsyEl, f.rs.y);
+  ilRsxVEl.textContent = f.rs.x.toFixed(2);
+  ilRsyVEl.textContent = f.rs.y.toFixed(2);
+  ilLtEl.style.width = `${Math.max(0, Math.min(1, f.l_trigger)) * 100}%`;
+  ilRtEl.style.width = `${Math.max(0, Math.min(1, f.r_trigger)) * 100}%`;
+  ilLtVEl.textContent = f.l_trigger.toFixed(2);
+  ilRtVEl.textContent = f.r_trigger.toFixed(2);
+  const pills: string[] = [];
+  for (const p of PILL_LABELS) {
+    const on = (f.buttons & p.bit) !== 0;
+    pills.push(`<span class="pill${on ? " on" : ""}">${p.label}</span>`);
+  }
+  ilPillsEl.innerHTML = pills.join("");
+}
+
 function renderCoach(g: GameState): void {
   const cl = buildChecklist(g, coachTarget);
   coachTargetEl.textContent = `${cl.title} (${cl.technique})`;
@@ -684,6 +740,7 @@ function frame(now: number) {
   }
   renderEventLog(game.nowMs);
   renderCoach(game);
+  if (lastFrame !== null) renderInputLive(lastFrame);
   scene3d.render();
   requestAnimationFrame(frame);
 }
@@ -757,6 +814,19 @@ function applyToScene(g: GameState) {
   scene3d.top.root.rotation.x = -pb.y * 0.4;
   scene3d.top.root.rotation.z = pb.x * 0.3;
   scene3d.top.setBreakBucket(breakBucket(pb));
+
+  // §D3 — colour limbs by their FSM state. Bottom is the attacker so
+  // hand FSMs drive the arms and foot FSMs drive the legs. The defender
+  // (top) only has hands + feet wired in this prototype, so we mirror
+  // the same pattern.
+  scene3d.bottom.setLimbState("armL", g.bottom.leftHand.state);
+  scene3d.bottom.setLimbState("armR", g.bottom.rightHand.state);
+  scene3d.bottom.setLimbState("legL", g.bottom.leftFoot.state);
+  scene3d.bottom.setLimbState("legR", g.bottom.rightFoot.state);
+  scene3d.top.setLimbState("armL", g.top.leftHand.state);
+  scene3d.top.setLimbState("armR", g.top.rightHand.state);
+  scene3d.top.setLimbState("legL", g.top.leftFoot.state);
+  scene3d.top.setLimbState("legR", g.top.rightFoot.state);
 
   const win = g.judgmentWindow;
   const tintStrength =

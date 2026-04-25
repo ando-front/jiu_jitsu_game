@@ -37,6 +37,10 @@ export interface BlockmanRig {
   root: THREE.Group;
   body: THREE.Mesh;
   setBreakBucket(bucket: number): void;
+  // §D3 — colour limbs by FSM state so input → state changes are visible
+  // even though we don't animate joints. State enum strings come from
+  // [hand_fsm.ts] / [foot_fsm.ts]; "IDLE" reverts to base body colour.
+  setLimbState(limb: "armL" | "armR" | "legL" | "legR", state: string): void;
 }
 
 // -----------------------------------------------------------------------------
@@ -229,18 +233,25 @@ function buildBlockman(baseColor: THREE.Color): BlockmanRig {
   head.position.y = 1.65;
   root.add(head);
 
-  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.58, 0.14), material);
+  // Limbs need their own materials so we can tint them per FSM state
+  // without affecting the torso/head.
+  const armLMat = new THREE.MeshStandardMaterial({ color: baseColor.clone(), roughness: 0.6 });
+  const armRMat = new THREE.MeshStandardMaterial({ color: baseColor.clone(), roughness: 0.6 });
+  const legLMat = new THREE.MeshStandardMaterial({ color: baseColor.clone(), roughness: 0.6 });
+  const legRMat = new THREE.MeshStandardMaterial({ color: baseColor.clone(), roughness: 0.6 });
+
+  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.58, 0.14), armLMat);
   armL.position.set(-0.36, 1.2, 0);
   root.add(armL);
-  const armR = armL.clone();
-  armR.position.x = 0.36;
+  const armR = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.58, 0.14), armRMat);
+  armR.position.set(0.36, 1.2, 0);
   root.add(armR);
 
-  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.72, 0.18), material);
+  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.72, 0.18), legLMat);
   legL.position.set(-0.13, 0.46, 0);
   root.add(legL);
-  const legR = legL.clone();
-  legR.position.x = 0.13;
+  const legR = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.72, 0.18), legRMat);
+  legR.position.set(0.13, 0.46, 0);
   root.add(legR);
 
   const breakTints: readonly THREE.Color[] = [
@@ -251,12 +262,37 @@ function buildBlockman(baseColor: THREE.Color): BlockmanRig {
     baseColor.clone().lerp(new THREE.Color(0x8a3a1a), 0.8),
   ];
 
+  // Per-state colours. Picked so the player can recognise transitions at
+  // a glance: REACH=cyan (moving), GRIP=yellow (engaged), PARRY=red,
+  // RETRACT=dim, LOCKED=green (foot hook holding), UNLOCKED=base.
+  const baseLimb = baseColor.clone();
+  const stateColors: Readonly<Record<string, THREE.Color>> = Object.freeze({
+    IDLE:      baseLimb.clone(),
+    REACHING:  new THREE.Color(0x6fd0ff),
+    CONTACT:   new THREE.Color(0xffffff),
+    GRIPPED:   new THREE.Color(0xf2cf5c),
+    PARRIED:   new THREE.Color(0xff6a4a),
+    RETRACT:   baseLimb.clone().multiplyScalar(0.55),
+    LOCKED:    new THREE.Color(0x7be0a0),
+    UNLOCKED:  baseLimb.clone(),
+    LOCKING:   new THREE.Color(0xc8e078),
+  });
+  const limbMats: Readonly<Record<string, THREE.MeshStandardMaterial>> = Object.freeze({
+    armL: armLMat, armR: armRMat, legL: legLMat, legR: legRMat,
+  });
+
   return {
     root,
     body: torso,
     setBreakBucket(bucket: number) {
       const idx = Math.max(0, Math.min(4, Math.floor(bucket)));
       material.color.copy(breakTints[idx]!);
+    },
+    setLimbState(limb, state) {
+      const mat = limbMats[limb];
+      const color = stateColors[state];
+      if (mat === undefined || color === undefined) return;
+      mat.color.copy(color);
     },
   };
 }

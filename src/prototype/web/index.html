@@ -253,6 +253,92 @@
         color: #f2e6a6;
         font-size: 10px;
       }
+      /* --- Input live-view (D2) — big readable bar of current inputs -- */
+      #input-live {
+        position: absolute;
+        right: 12px;
+        bottom: 320px;
+        width: 220px;
+        padding: 10px 12px;
+        background: rgba(10, 12, 22, 0.78);
+        border: 1px solid #3a3f6a;
+        border-radius: 6px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: #d8dcf0;
+        pointer-events: none;
+        z-index: 24;
+      }
+      #input-live h3 {
+        margin: 0 0 6px;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        color: #9ea0ff;
+        text-transform: uppercase;
+      }
+      #input-live .row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 3px 0;
+        font-size: 11px;
+      }
+      #input-live .label {
+        flex: 0 0 60px;
+        color: #a8acc4;
+      }
+      #input-live .bar {
+        flex: 1 1 auto;
+        position: relative;
+        height: 8px;
+        background: rgba(40, 44, 78, 0.7);
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      #input-live .bar .fill {
+        position: absolute;
+        top: 0; bottom: 0; left: 0;
+        background: linear-gradient(90deg, #6fd0ff 0%, #f2cf5c 70%, #ff6a4a 100%);
+        transition: width 60ms linear;
+      }
+      #input-live .bar .center {
+        position: absolute;
+        top: -1px; bottom: -1px;
+        left: 50%;
+        width: 1px;
+        background: rgba(255, 255, 255, 0.2);
+      }
+      #input-live .bar .signed {
+        position: absolute;
+        top: 0; bottom: 0;
+        background: #6fd0ff;
+        transition: width 60ms linear, left 60ms linear;
+      }
+      #input-live .val {
+        flex: 0 0 30px;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        color: #c4c8e0;
+      }
+      #input-live .pills {
+        display: flex;
+        gap: 4px;
+        flex-wrap: wrap;
+        margin-top: 6px;
+      }
+      #input-live .pill {
+        padding: 1px 6px;
+        border-radius: 8px;
+        font-size: 10px;
+        background: rgba(40, 44, 78, 0.7);
+        color: #8d90a8;
+        border: 1px solid #3a3f6a;
+      }
+      #input-live .pill.on {
+        background: rgba(120, 180, 100, 0.3);
+        color: #c4f0d4;
+        border-color: #6da080;
+      }
       /* --- Tutorial overlay (日本語) ---------------------------------- */
       #tutorial-toggle {
         position: absolute;
@@ -423,6 +509,41 @@
       <div id="event-log">
         <h3>Event log</h3>
         <ul id="event-log-list"></ul>
+      </div>
+
+      <div id="input-live">
+        <h3>Input live</h3>
+        <div class="row">
+          <span class="label">L-stick X</span>
+          <div class="bar"><div class="center"></div><div class="signed" id="il-lsx"></div></div>
+          <span class="val" id="il-lsx-v">0.00</span>
+        </div>
+        <div class="row">
+          <span class="label">L-stick Y</span>
+          <div class="bar"><div class="center"></div><div class="signed" id="il-lsy"></div></div>
+          <span class="val" id="il-lsy-v">0.00</span>
+        </div>
+        <div class="row">
+          <span class="label">R-stick X</span>
+          <div class="bar"><div class="center"></div><div class="signed" id="il-rsx"></div></div>
+          <span class="val" id="il-rsx-v">0.00</span>
+        </div>
+        <div class="row">
+          <span class="label">R-stick Y</span>
+          <div class="bar"><div class="center"></div><div class="signed" id="il-rsy"></div></div>
+          <span class="val" id="il-rsy-v">0.00</span>
+        </div>
+        <div class="row">
+          <span class="label">L-Trig (F)</span>
+          <div class="bar"><div class="fill" id="il-lt"></div></div>
+          <span class="val" id="il-lt-v">0.00</span>
+        </div>
+        <div class="row">
+          <span class="label">R-Trig (J)</span>
+          <div class="bar"><div class="fill" id="il-rt"></div></div>
+          <span class="val" id="il-rt-v">0.00</span>
+        </div>
+        <div class="pills" id="il-pills"></div>
       </div>
 
       <div id="coach">
