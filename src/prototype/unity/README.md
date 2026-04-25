@@ -69,7 +69,10 @@ Unity Hub → **Add project from disk** → `src/prototype/unity/` → open with
 
 ### 2. Confirm packages installed
 
-**Window → Package Manager** → verify `Input System` (1.11.2) is present.
+**Window → Package Manager** → verify `Input System` (1.11.2) is present and
+`MCP for Unity` (com.coplaydev.unity-mcp) is present (manifest.json pulls it
+in automatically; first import takes ~30s for the git fetch).
+
 If Unity prompts to enable the New Input System backend, click **Yes** and
 let the editor restart.
 
@@ -78,31 +81,24 @@ let the editor restart.
 **Window → General → Test Runner → EditMode → Run All**. Should report
 **~270 passed / 0 failed** in under 10 seconds.
 
-### 4. Create the BJJ scene
+### 4. Build the BJJ scene (one click)
 
-1. **File → New Scene** → **Basic (Built-in)** template → save as
-   `Assets/Scenes/BJJ.unity` (create the `Scenes/` folder if it doesn't exist).
-2. In the Hierarchy window: **+ → Create Empty** → rename to **`BJJ_GameManager`**.
-3. With `BJJ_GameManager` selected, in the Inspector click **Add Component**
-   and add **all four** Platform components in this order:
-   - `BJJSessionLifecycle`
-   - `BJJInputProvider`
-   - `BJJGameManager`
-   - `BJJDebugHud`
-   (Unity's `[RequireComponent]` chain enforces this order.)
-4. On the `BJJInputProvider` component, drag
-   `Assets/BJJSimulator/Runtime/Input/BJJInputActions.inputactions` from the
-   Project window into the **Actions Asset** slot.
-5. On the `BJJGameManager` component, drag the same `BJJ_GameManager`
-   GameObject (the one you're inspecting) into the **Hud** slot — it picks
-   up the `BJJDebugHud` automatically.
-6. Save the scene (Ctrl+S / Cmd+S).
+From the Unity menu bar choose **BJJ → Setup Scene**. The editor script at
+`Assets/BJJSimulator/Editor/BJJSceneSetup.cs` will:
 
-### 5. Add the scene to Build Settings (optional, for builds)
+- Create `Assets/Scenes/BJJ.unity` (overwriting any prior copy)
+- Spawn `BJJ_GameManager` with `BJJSessionLifecycle` → `BJJInputProvider` →
+  `BJJGameManager` → `BJJDebugHud` attached in the order `[RequireComponent]`
+  expects
+- Wire `BJJInputProvider.actionsAsset` to `BJJInputActions.inputactions`
+- Wire `BJJGameManager.hud` to the same GameObject's `BJJDebugHud`
+- Save the scene and register it as Build Settings index 0
 
-**File → Build Settings → Scenes In Build → +** → select `BJJ.unity`.
+A confirmation dialog appears when the build is complete. Re-run the menu at
+any time to reset the scene to a known-good state. **BJJ → Open Scene** is
+also exposed for quick navigation.
 
-### 6. Press Play
+### 5. Press Play
 
 Hit the **▶︎ Play** button. You should see:
 
@@ -117,7 +113,7 @@ Hit the **▶︎ Play** button. You should see:
   SESSION END: GuardOpened`
 - Press **Space** on the end overlay → restart
 
-### 7. Run a practice scenario
+### 6. Run a practice scenario
 
 **While in `Active` phase**, press a number key (currently keyboard-bound
 through Unity's editor focus, not via the Input Action asset — these will be
@@ -146,6 +142,84 @@ Editor menu item, or wait for the next iteration.
   reporting axes pinned at -1), keyboard input will be ignored. Fix is to
   port the same arbitration into `Runtime/Input/LayerA.cs` — tracked as a
   follow-up task.
+
+## Unity MCP integration (Editor automation from Claude Code)
+
+This repo ships pre-wired for [`CoplayDev/unity-mcp`](https://github.com/CoplayDev/unity-mcp),
+which exposes the running Unity Editor to Claude Code (and Cursor / Claude
+Desktop / Windsurf) as an MCP server. Once both halves are running, a Claude
+Code session on your local machine gains `mcp__unity__*` tools that can read
+the project, run EditMode tests, build scenes, manipulate GameObjects, and
+trigger Play mode without manual menu clicks.
+
+### Architecture (why two pieces)
+
+```
+┌──────────────────┐  HTTP :8080   ┌────────────────────┐
+│  Claude Code     │  ──────────►  │  MCP for Unity     │
+│  (your terminal) │  ◄──────────  │  bridge (in Editor)│
+└──────────────────┘               └────────────────────┘
+        ▲                                    │
+        │ reads .mcp.json                    │ drives
+        ▼                                    ▼
+  /jiu_jitsu_game/.mcp.json          your open Unity 6 project
+```
+
+- `.mcp.json` at the repo root tells Claude Code to expect an MCP server at
+  `http://localhost:8080/mcp`.
+- `Packages/manifest.json` contains the `com.coplaydev.unity-mcp` git
+  dependency, so the bridge installs automatically on first project import.
+- The bridge runs **inside Unity** — it only listens while the Editor is open
+  and the server has been started.
+
+### One-time local setup (5 minutes)
+
+1. **Open the Unity project** as in the §1 steps above. Wait for the package
+   manager to finish — `MCP for Unity` should appear in the package list.
+2. **Open the bridge window**: **Window → MCP for Unity**. The first time you
+   open it Unity will compile the bridge's editor scripts (~10s).
+3. **Click `Start Server`**. The status indicator turns green and the
+   bridge begins listening on `127.0.0.1:8080` (loopback only by default —
+   LAN binding is opt-in under Advanced).
+4. **(Optional) Tick `Auto-start with Editor`** so the server resumes the next
+   time you open the project.
+5. **Launch Claude Code** from the repo root:
+   ```sh
+   cd /path/to/jiu_jitsu_game
+   claude
+   ```
+   On first connect, Claude Code will prompt to approve the `unityMCP` server
+   from `.mcp.json`. Approve project-scope.
+6. **Verify the connection** by typing `/mcp` inside Claude Code. You should
+   see `unityMCP` listed as `connected` with a tool count > 0.
+
+### Daily workflow
+
+- **Start of session**: open Unity → it auto-starts the server (if you ticked
+  the box) → run `claude` from the repo root.
+- **Sanity check**: ask Claude `list the GameObjects in the BJJ scene` — if
+  the bridge is up, Claude will use `mcp__unity__*` tools and answer with
+  the live hierarchy.
+- **End of session**: closing Unity stops the server. Claude Code will report
+  `unityMCP` as disconnected on its next `/mcp` check; that's expected.
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `/mcp` shows `unityMCP: failed` | Unity not running, or `Start Server` not clicked | Open Unity → Window → MCP for Unity → Start Server |
+| `/mcp` shows `unityMCP: connected` but no tools | Bridge crashed or wrong Unity version | Console window → check for `MCPForUnity` errors. The bridge supports Unity 2021.3 LTS+ |
+| Claude says it can't reach `localhost:8080` from within a remote/cloud sandbox | The bridge is loopback-only by design | Run Claude Code on the same machine as Unity. Cloud sandboxes (e.g. claude.ai/code) cannot see your local Unity Editor |
+| `manifest.json` git fetch fails on first import | Offline / corp proxy blocking github.com | Either remove the `com.coplaydev.unity-mcp` line and install via Package Manager → "Add package from git URL", or configure git to use your proxy |
+| Want a different fork (e.g. `justinpbarnett/unity-mcp`) | — | Replace the git URL in `Packages/manifest.json` and the URL/transport block in `.mcp.json` according to that fork's README |
+
+### Security note
+
+The bridge has access to your Unity project and can mutate the scene, run
+arbitrary edit-time C#, and trigger Play mode. Treat it the same as giving
+Claude Code shell access to the project. The default loopback-only binding
+prevents anyone on your LAN from connecting; do not change this unless you
+understand the implications.
 
 ## Port Progress
 
