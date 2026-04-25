@@ -1,7 +1,9 @@
 {
     "name": "BJJSimulator",
     "rootNamespace": "BJJSimulator",
-    "references": [],
+    "references": [
+        "Unity.InputSystem"
+    ],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
