@@ -1,7 +1,7 @@
 # Stage 2 Unity 移植計画 v1.1
 
 **作成日**: 2026-04-24
-**改訂日**: 2026-04-25 (実態調査により §3 を最新化)
+**改訂日**: 2026-04-25 (実態調査により §3 を最新化, 単体・結合テスト完了 + Editor 自動化を反映)
 **対象エンジン**: Unity 6 (6000.0 LTS)
 **前提**:
 - [architecture_overview_v1.md §4](./architecture_overview_v1.md) — 型と層の対応表
@@ -175,37 +175,66 @@ bool recentlyParried = hasParryMemory && (nowMs - prev.LastParriedAtMs) < t.Shor
 
 ## 3. 次の作業単位 (小さい順)
 
-**現状 (2026-04-25)**: コアロジック (state / input / sim / AI) の C# port は
-すべて 🟢。**残りは「実装はあるがテストが無い」6 ファイルの NUnit テスト追加**
-と、それ以降の Unity 固有作業 (シーン / ビジュアル / GameManager) のみ。
+**現状 (2026-04-25 改訂後)**: Pure コアロジック (state / input / sim / AI) の C# port は
+すべて 🟢、対応する EditMode 単体テスト + シナリオ結合テストもすべて 🟢、Platform 層
+(`BJJGameManager` / `BJJInputProvider` / `BJJSessionLifecycle` / `BJJDebugHud`) と
+`BJJInputActions.inputactions` も完成、Editor 自動シーン構築 (`BJJSceneSetup.cs`) と
+Unity MCP 統合 (`Packages/manifest.json` + repo `.mcp.json`) も配備済み。
+**残るのは §3.3 のうち項目 3-5(visuals / URP / UI Toolkit)のみ**。これらは
+Unity Editor 上で対話的に設計するのが効率的なので、Stage 2 を実機で開いてから
+別ファイルで個別に詰める。
 
-### 3.1 単体テスト負債 (合計 ~80 ケース)
+### 3.1 単体テスト負債 (✅ 解消済 — 2026-04-25)
 
-| 優先 | C# 実装 | TS テスト原本 | ケース数 |
-|---|---|---|---|
-| 1 | `Runtime/State/CutAttempt.cs` | `tests/unit/cut_attempt.test.ts` | 10 |
-| 2 | `Runtime/State/PassAttempt.cs` | `tests/unit/pass_attempt.test.ts` | 11 |
-| 3 | `Runtime/Input/LayerA.cs` | `tests/unit/layerA.test.ts` (assembler 部分) | 17 |
-| 4 | `Runtime/Input/LayerBDefense.cs` | `tests/unit/layerB_defense.test.ts` | 23 |
-| 5 | `Runtime/Sim/FixedStep.cs` | `tests/unit/fixed_step.test.ts` | 6 |
-| 6 | `Runtime/AI/OpponentAI.cs` | `tests/unit/opponent_ai.test.ts` | 18 |
+| 優先 | C# 実装 | TS テスト原本 | Stage 2 テスト | 状態 |
+|---|---|---|---|---|
+| 1 | `Runtime/State/CutAttempt.cs` | `tests/unit/cut_attempt.test.ts` | `Tests/EditMode/CutAttemptTest.cs` | 🟢 |
+| 2 | `Runtime/State/PassAttempt.cs` | `tests/unit/pass_attempt.test.ts` | `Tests/EditMode/PassAttemptTest.cs` | 🟢 |
+| 3 | `Runtime/Input/LayerA.cs` | `tests/unit/layerA.test.ts` (assembler 部分) | `Tests/EditMode/LayerATest.cs` | 🟢 |
+| 4 | `Runtime/Input/LayerBDefense.cs` | `tests/unit/layerB_defense.test.ts` | `Tests/EditMode/LayerBDefenseTest.cs` | 🟢 |
+| 5 | `Runtime/Sim/FixedStep.cs` | `tests/unit/fixed_step.test.ts` | `Tests/EditMode/FixedStepTest.cs` | 🟢 |
+| 6 | `Runtime/AI/OpponentAI.cs` | `tests/unit/opponent_ai.test.ts` | `Tests/EditMode/OpponentAITest.cs` | 🟢 |
 
-各ケースは `[Test]` メソッドとして `Tests/EditMode/XxxTest.cs` に追加する。
-HandFSMTest.cs と同じ NUnit + AAA スタイルを踏襲。
+加えて 2026-04-25 に **noisy-gamepad keyboard arbitration** (`LayerAOps.KbRecentMs`) を
+port し、`LayerANoisyGamepadTests` 5 ケース (held / recent / stale / sentinel / boundary)
+を追加した。これは Stage 1 にも対応する単体テストが無かった部分 — Stage 2 が先行している。
 
-### 3.2 結合テスト (シナリオ層)
+### 3.2 結合テスト (シナリオ層) (✅ 解消済 — 2026-04-25)
 
-`tests/scenario/*.test.ts` (6 ファイル, ~33 ケース) は GameState を一巡させる
-スモークテスト。Unity 側でも `Tests/EditMode/Scenario/*.cs` として追加するが、
-3.1 完了後でよい。
+`tests/scenario/*.test.ts` (6 ファイル, ~33 ケース) の port は完了:
+
+| Stage 1 | Stage 2 |
+|---|---|
+| `tests/scenario/counter_integration.test.ts` | `Tests/EditMode/Scenario/CounterIntegrationTest.cs` |
+| `tests/scenario/cut_attempt_integration.test.ts` | `Tests/EditMode/Scenario/CutAttemptIntegrationTest.cs` |
+| `tests/scenario/defense_integration.test.ts` | `Tests/EditMode/Scenario/DefenseIntegrationTest.cs` |
+| `tests/scenario/game_state.test.ts` | `Tests/EditMode/Scenario/GameStateScenarioTest.cs` |
+| `tests/scenario/pass_attempt_integration.test.ts` | `Tests/EditMode/Scenario/PassAttemptIntegrationTest.cs` |
+| `tests/scenario/technique_scenarios.test.ts` | `Tests/EditMode/Scenario/TechniqueScenariosTest.cs` |
 
 ### 3.3 Unity 固有 (テスト負債解消後)
 
-1. `GameManager` MonoBehaviour — `main.ts` の rAF ループを `Update` に分解
-2. New Input System の `BJJInputActions.inputactions` 定義 + `LayerA` への wire
-3. Skinned mesh + Animator (Stage 1 blockman 相当)
-4. URP Volume profile — stamina warm shift / judgment-window vignette
-5. UI Toolkit でコーチ HUD / イベントログ移植
+| # | 項目 | 状態 | 備考 |
+|---|---|---|---|
+| 1 | `BJJGameManager` MonoBehaviour — `main.ts` の rAF ループを `Update` に分解 | 🟢 | + `BJJSessionLifecycle` / `BJJInputProvider` / `BJJDebugHud` |
+| 2 | New Input System の `BJJInputActions.inputactions` 定義 + `LayerA` への wire | 🟢 | `BJJInputProvider.OnEnable` で resolve |
+| 3 | Skinned mesh + Animator (Stage 1 blockman 相当) | ⚪ | Editor で対話設計 |
+| 4 | URP Volume profile — stamina warm shift / judgment-window vignette | ⚪ | Visual Pillar §5.4 準拠 |
+| 5 | UI Toolkit でコーチ HUD / イベントログ移植 | ⚪ | 現 IMGUI HUD は v1 暫定 |
+
+### 3.4 周辺整備 (✅ 完了)
+
+- **Editor 自動シーン構築** — `Assets/BJJSimulator/Editor/BJJSceneSetup.cs` の
+  `BJJ → Setup Scene` メニューで `BJJ.unity` を 1 クリック生成。
+- **Unity MCP 統合** — `Packages/manifest.json` に `com.coplaydev.unity-mcp` を追加、
+  repo ルート `.mcp.json` で Claude Code がローカル Unity Editor を `localhost:8080/mcp`
+  経由で操作可能。詳細は `src/prototype/unity/README.md` の "Unity MCP integration" 節。
+
+### 3.5 既知の README 残課題 (実装はあるが UI 未配線)
+
+- **Scenario picker UI**: `BJJInputActions.inputactions` に Digit1-7 binding が無く、
+  シナリオ起動はコードからのみ。Lifecycle API は完成しているので InputActions 編集と
+  `BJJGameManager.Update` への分岐 1 箇所追加で解消可能。
 
 ---
 
