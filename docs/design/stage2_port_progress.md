@@ -1,6 +1,6 @@
 # Stage 2 移植 進捗トラッカ
 
-**最終更新**: 2026-04-25
+**最終更新**: 2026-04-26
 **エンジン**: Unity 6 (6000.0 LTS) — UE5 から変更 (2026-04-23)
 **前提**: [stage2_port_plan_v1.md](./stage2_port_plan_v1.md) §1 のファイル対応表
 
@@ -20,7 +20,7 @@
 - **New Input System (`BJJInputActions.inputactions`)**: 🟢 (Digit1-7 binding は未追加 — §残課題参照)
 - **Editor 自動化 (`BJJSceneSetup.cs`)**: 🟢 (`BJJ → Setup Scene` メニュー)
 - **Unity MCP 統合**: 🟢 (`com.coplaydev.unity-mcp` + `.mcp.json`)
-- **レンダ / 演出 (mesh / URP / UI Toolkit)**: 全 ⚪ (Editor 上で対話設計)
+- **レンダ / 演出 (mesh / URP / UI Toolkit)**: 🟡 着手中 (`BJJAvatarBinder` 完了; URP Volume / UI Toolkit は ⚪)
 
 ---
 
@@ -96,7 +96,7 @@
 
 | Stage 1 相当 | Stage 2 出力 | 状態 |
 |---|---|---|
-| `scene/blockman.ts` | Skinned mesh + Animator Controller | ⚪ |
+| `scene/blockman.ts` | `Runtime/Platform/BJJAvatarBinder.cs` + `Assets/BJJSimulator/Art/` | 🟡 コード完了; Inspector rig 配線は Editor 作業 |
 | stamina color grading | URP PostProcess Volume | ⚪ |
 | `setWindowTint` / `pulseFlash` | PostProcess + Camera Shake | ⚪ |
 | HUD / event log / tutorial / pause | UI Toolkit | ⚪ (現 IMGUI HUD は v1 暫定) |
@@ -138,16 +138,15 @@
 Pure / テスト / Platform / Editor 自動化 / MCP / Scenario picker wiring は完了。
 残るのは Visual Pillar 領域。
 
-1. **Skinned mesh + Animator** — Stage 1 blockman 相当。`Assets/BJJSimulator/Art/`
-   配下にプレースホルダ rig を置き、`BJJ_GameManager` に `BJJAvatarBinder` を
-   足す方向。Editor 上で対話設計推奨。
+1. ~~**Skinned mesh + Animator**~~ 🟢 **完了 (2026-04-26)** — `Runtime/Platform/BJJAvatarBinder.cs`
+   + `Assets/BJJSimulator/Art/` ディレクトリを追加。`BJJGameManager.CurrentGameState` を
+   LateUpdate で読み BlockMan 関節 Transform へ流す。Inspector rig 配線 (Prefab 組み立て)
+   は Editor 作業として残る。
 2. **URP Volume profile** — stamina warm shift / judgment-window vignette。
    Visual Pillar §5.4 準拠。`BJJDebugHud` の代替として最小プロファイル。
 3. **UI Toolkit へのコーチ HUD 移植** — 現 IMGUI HUD を `.uxml` + `.uss` に分解。
-4. **PlayMode テスト** — New Input System 経路の生 polling は EditMode 純関数では
-   検証できない。`Tests/PlayMode/` を新設し、`BJJInputProvider.PollHardware` 経路の
-   integration テストをいくつか書く価値あり(scenario digit edge / noisy gamepad
-   挙動の実機確認はここで行う)。
+4. ~~**PlayMode テスト**~~ 🟢 **完了 (2026-04-26)** — `Tests/PlayMode/BJJInputProviderPlayModeTests.cs`
+   (4 ケース) + `BJJSimulator.PlayModeTests.asmdef` を追加。PR #19 マージ済み。
 
 ---
 
