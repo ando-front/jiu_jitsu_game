@@ -61,7 +61,7 @@
 | `input/layerD_defense.ts` | `Runtime/Input/LayerDDefense.cs` | 🟢 |
 | `input/transform.ts` | `Runtime/Input/InputTransform.cs` | 🟢 |
 | `input/keyboard.ts` / `gamepad.ts` | — | 🚫 New Input System で代替(`BJJInputProvider` がブリッジ) |
-| `BJJInputActions.inputactions` | 🟢 | Digit1-7 binding は未追加(§残課題参照) |
+| `BJJInputActions.inputactions` | 🟢 | gameplay 用 action map を提供。scenario digit (`Digit0-7`) は `BJJInputProvider` が `Keyboard.current` から直接 polling(meta-key と同じ扱い) |
 
 ## 状態機械
 
@@ -135,21 +135,19 @@
 
 ## 次の作業単位 (小さい順)
 
-Pure / テスト / Platform / Editor 自動化 / MCP は完了。残るのは Visual Pillar
-領域および小さな配線残課題。
+Pure / テスト / Platform / Editor 自動化 / MCP / Scenario picker wiring は完了。
+残るのは Visual Pillar 領域。
 
-1. **Scenario picker UI** — `BJJInputActions.inputactions` に Digit1-7 binding を
-   追加し、`BJJGameManager.Update` で edge を `BJJSessionLifecycle.LoadScenario` に
-   ルーティング。Pure 側の `Scenarios.Build` は完成しているので Wiring のみ。
-2. **Skinned mesh + Animator** — Stage 1 blockman 相当。`Assets/BJJSimulator/Art/`
+1. **Skinned mesh + Animator** — Stage 1 blockman 相当。`Assets/BJJSimulator/Art/`
    配下にプレースホルダ rig を置き、`BJJ_GameManager` に `BJJAvatarBinder` を
    足す方向。Editor 上で対話設計推奨。
-3. **URP Volume profile** — stamina warm shift / judgment-window vignette。
+2. **URP Volume profile** — stamina warm shift / judgment-window vignette。
    Visual Pillar §5.4 準拠。`BJJDebugHud` の代替として最小プロファイル。
-4. **UI Toolkit へのコーチ HUD 移植** — 現 IMGUI HUD を `.uxml` + `.uss` に分解。
-5. **PlayMode テスト** — New Input System 経路の生 polling は EditMode 純関数では
+3. **UI Toolkit へのコーチ HUD 移植** — 現 IMGUI HUD を `.uxml` + `.uss` に分解。
+4. **PlayMode テスト** — New Input System 経路の生 polling は EditMode 純関数では
    検証できない。`Tests/PlayMode/` を新設し、`BJJInputProvider.PollHardware` 経路の
-   integration テストをいくつか書く価値あり。
+   integration テストをいくつか書く価値あり(scenario digit edge / noisy gamepad
+   挙動の実機確認はここで行う)。
 
 ---
 
