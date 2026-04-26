@@ -61,6 +61,15 @@ namespace BJJSimulator.Platform
         private KeyboardSnapshot _kbPrev;
         private long _kbLastEventMs = BJJConst.SentinelTimeMs;
 
+        // Scenario digit edge tracking — bit N (0..9) is set if Digit N saw
+        // an up→down edge during the most recent PollHardware call. Mirrors
+        // the global keydown listener in src/prototype/web/src/main.ts §144.
+        // BJJGameManager reads DigitEdges immediately after PollHardware and
+        // routes Digit1..7 to LoadScenario / Digit0 to RestartSession.
+        private int _digitPrev;
+        private int _digitEdges;
+        public int DigitEdges => _digitEdges;
+
         private struct KeyboardSnapshot
         {
             public ButtonBit Buttons;
@@ -212,6 +221,24 @@ namespace BJJSimulator.Platform
                 _kbPrev = kbNow;
             }
 
+            // Scenario digit polling — Digit0..Digit7 read directly so they
+            // stay independent of the Player action map and don't share edges
+            // with the gameplay buttons.
+            int digitNow = 0;
+            if (kb != null)
+            {
+                if (kb.digit0Key.isPressed) digitNow |= 1 << 0;
+                if (kb.digit1Key.isPressed) digitNow |= 1 << 1;
+                if (kb.digit2Key.isPressed) digitNow |= 1 << 2;
+                if (kb.digit3Key.isPressed) digitNow |= 1 << 3;
+                if (kb.digit4Key.isPressed) digitNow |= 1 << 4;
+                if (kb.digit5Key.isPressed) digitNow |= 1 << 5;
+                if (kb.digit6Key.isPressed) digitNow |= 1 << 6;
+                if (kb.digit7Key.isPressed) digitNow |= 1 << 7;
+            }
+            _digitEdges = digitNow & ~_digitPrev; // up→down only
+            _digitPrev  = digitNow;
+
             _snapshot = new RawHardwareSnapshot
             {
                 GamepadConnected = padConnected,
@@ -247,6 +274,13 @@ namespace BJJSimulator.Platform
             _pendingAiTop    = null;
             _kbPrev          = default;
             _kbLastEventMs   = BJJConst.SentinelTimeMs;
+            // Intentionally do NOT clear _digitPrev — if ResetForTest is
+            // called from HandleScenarioLoad while the user is still holding
+            // the digit key, clearing it would let the next PollHardware see
+            // a fresh up→down edge and re-trigger the same scenario every
+            // frame. _digitEdges is recomputed by PollHardware so its
+            // current value is irrelevant; we still null it for cleanliness.
+            _digitEdges      = 0;
         }
 
         // ---------------------------------------------------------------------

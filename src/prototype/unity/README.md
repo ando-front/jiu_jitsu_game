@@ -115,13 +115,22 @@ Hit the **▶︎ Play** button. You should see:
 
 ### 6. Run a practice scenario
 
-**While in `Active` phase**, press a number key (currently keyboard-bound
-through Unity's editor focus, not via the Input Action asset — these will be
-wired into the Action asset in a later iteration). For now, scenarios are
-loadable only via code; v1 of the GameManager doesn't yet have a digit-key
-binding (Stage 1 had it). To exercise a scenario right now, edit
-`BJJSessionLifecycle.LoadScenario(ScenarioName.TriangleReady)` from a one-off
-Editor menu item, or wait for the next iteration.
+Outside the role prompt and tutorial, press a digit key:
+
+| Key | Action |
+|---|---|
+| `1` | Load `ScissorReady` |
+| `2` | Load `FlowerReady` |
+| `3` | Load `TriangleReady` |
+| `4` | Load `OmoplataReady` |
+| `5` | Load `HipBumpReady` |
+| `6` | Load `CrossCollarReady` |
+| `7` | Load `PassDefense` |
+| `0` | Restart neutral (no scenario) |
+
+Each press resets the round timer and forces the lifecycle into `Active`,
+even from `Paused` or `SessionEnded`. Order matches Stage 1's
+`SCENARIO_ORDER` so playtest scripts port directly.
 
 ## Known v1 Limitations
 
@@ -132,8 +141,6 @@ Editor menu item, or wait for the next iteration.
   per-technique checklist from Stage 1 will move to UI Toolkit in a follow-up.
 - **Tutorial overlay**: placeholder text only. The Stage 1 Japanese tutorial
   HTML page will become a UI Toolkit document later.
-- **Scenario picker UI**: keyboard digit binding not yet in the InputActions
-  asset. Use the Lifecycle API directly until then.
 - **Round timer length**: editable in `BJJGameManager` Inspector (default 5
   min, matches IBJJF adult white/blue belt).
 

@@ -232,9 +232,13 @@ port し、`LayerANoisyGamepadTests` 5 ケース (held / recent / stale / sentin
 
 ### 3.5 既知の README 残課題 (実装はあるが UI 未配線)
 
-- **Scenario picker UI**: `BJJInputActions.inputactions` に Digit1-7 binding が無く、
-  シナリオ起動はコードからのみ。Lifecycle API は完成しているので InputActions 編集と
-  `BJJGameManager.Update` への分岐 1 箇所追加で解消可能。
+- **Scenario picker UI** ✅ — 2026-04-25 解消済。`BJJInputProvider.PollHardware` が
+  `Keyboard.current.digit0Key..digit7Key` を直接 polling し edges を `DigitEdges`
+  プロパティで公開、`BJJGameManager.HandleDigitEdges` が Active / Paused /
+  SessionEnded 中のみルーティング(Stage 1 main.ts §144 の挙動を維持)。
+  `BJJInputActions.inputactions` には gameplay 用 action map のみを置き、
+  scenario digit は他の meta-key (Pause / Tutorial) と同じく直接 polling 経由で
+  扱う方針。
 
 ---
 

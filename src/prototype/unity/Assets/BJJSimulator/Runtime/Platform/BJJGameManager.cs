@@ -85,6 +85,11 @@ namespace BJJSimulator.Platform
             Provider.SetCurrentGameState(_simState.Game);
             var (probe, _, _) = Provider.Sample(now);
 
+            // Scenario digit routing — global, runs ahead of the phase switch
+            // so a digit press during Active / Paused / SessionEnded reloads
+            // the sim immediately. Mirrors src/prototype/web/src/main.ts §144.
+            if (HandleDigitEdges(Provider.DigitEdges)) return;
+
             switch (Lifecycle.CurrentPhase)
             {
                 case LifecyclePhase.Prompt:
@@ -205,5 +210,40 @@ namespace BJJSimulator.Platform
             if (crossedRight) Lifecycle.CycleRole(+1);
             _lastPromptLsX = x;
         }
+
+        // Routes scenario-digit edges from BJJInputProvider. Returns true if
+        // a digit was consumed, in which case the caller should skip the
+        // phase switch for this Update tick (the lifecycle handlers reset
+        // _simState synchronously). Mirrors main.ts §144:
+        //   Digit0    → restart neutral
+        //   Digit1..7 → load SCENARIO_ORDER[N-1]
+        // Ignored while the role prompt or tutorial owns the screen.
+        private bool HandleDigitEdges(int edges)
+        {
+            if (edges == 0) return false;
+            var phase = Lifecycle.CurrentPhase;
+            if (phase == LifecyclePhase.Prompt || phase == LifecyclePhase.Tutorial)
+                return false;
+
+            if ((edges & (1 << 0)) != 0)
+            {
+                Lifecycle.RestartSession();
+                return true;
+            }
+
+            for (int d = 1; d <= ScenarioDigitCount; d++)
+            {
+                if ((edges & (1 << d)) != 0)
+                {
+                    Lifecycle.LoadScenario((ScenarioName)(d - 1));
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Number of scenario digits (1..7) wired to the keyboard; matches the
+        // count of ScenarioName enum values. Update if Scenarios.cs grows.
+        private const int ScenarioDigitCount = 7;
     }
 }
