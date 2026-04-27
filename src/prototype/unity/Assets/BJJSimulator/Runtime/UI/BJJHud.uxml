@@ -1,0 +1,55 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements">
+    <Style src="BJJHud.uss"/>
+
+    <!-- top-left: phase / input / sim debug -->
+    <ui:VisualElement name="panel-top-left" class="panel">
+        <ui:Label name="lbl-phase" />
+        <ui:Label name="lbl-round" />
+        <ui:VisualElement name="section-layer-a">
+            <ui:Label text="── Layer A ──" class="section-hdr" />
+            <ui:Label name="lbl-ls-rs" />
+            <ui:Label name="lbl-triggers" />
+            <ui:Label name="lbl-buttons" />
+        </ui:VisualElement>
+        <ui:VisualElement name="section-intent">
+            <ui:Label text="── Intent ──" class="section-hdr" />
+            <ui:Label name="lbl-hip" />
+            <ui:Label name="lbl-grip" />
+        </ui:VisualElement>
+        <ui:Label text="── Sim ──" class="section-hdr" />
+        <ui:Label name="lbl-lhand" />
+        <ui:Label name="lbl-rhand" />
+        <ui:Label name="lbl-feet" />
+        <ui:Label name="lbl-stamina" />
+        <ui:Label name="lbl-break" />
+        <ui:Label name="lbl-window" />
+        <ui:Label name="lbl-counter" />
+    </ui:VisualElement>
+
+    <!-- top-right: controls hint (static) -->
+    <ui:VisualElement name="panel-top-right" class="panel">
+        <ui:Label text="[H] tutorial   [Esc] pause   [1-7] scenario   [0] reset" />
+        <ui:Label text="Bottom: WASD腰  ↑↓←→グ狙い  F/J トリガー  R/U 足" />
+        <ui:Label text="Space=A  X=B  C=Y  V=X" />
+    </ui:VisualElement>
+
+    <!-- bottom-left: coach checklist -->
+    <ui:VisualElement name="panel-bottom-left" class="panel">
+        <ui:Label text="Coach (v1 minimal)" class="section-hdr" />
+        <ui:Label name="lbl-feet-locked" />
+        <ui:Label name="lbl-hands-gripped" />
+        <ui:Label name="lbl-break-mag" />
+        <ui:Label name="lbl-hip-push" />
+    </ui:VisualElement>
+
+    <!-- bottom-right: rolling event log -->
+    <ui:VisualElement name="panel-bottom-right" class="panel">
+        <ui:Label text="Event log (latest 12)" class="section-hdr" />
+        <ui:Label name="lbl-event-log" />
+    </ui:VisualElement>
+
+    <!-- center overlay: Prompt / Paused / Tutorial / SessionEnded -->
+    <ui:VisualElement name="overlay" class="overlay hidden">
+        <ui:Label name="lbl-overlay" class="overlay-text" />
+    </ui:VisualElement>
+</ui:UXML>

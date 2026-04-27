@@ -1,0 +1,77 @@
+/* BJJHud.uss — dark debug HUD theme for UI Toolkit.
+   All panels are absolutely positioned so they don't affect layout flow. */
+
+/* ── Common panel ── */
+.panel {
+    position: absolute;
+    background-color: #0000008C;   /* ~55% opaque black */
+    padding: 6px;
+    flex-direction: column;
+}
+
+/* ── Default label ── */
+.unity-label {
+    color: #D9D9E0FF;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.section-hdr {
+    color: #A0C8FFFF;
+}
+
+/* ── Panel positions ── */
+#panel-top-left {
+    left: 8px;
+    top: 8px;
+    width: 460px;
+}
+
+#panel-top-right {
+    right: 8px;
+    top: 8px;
+    width: 360px;
+}
+
+#panel-bottom-left {
+    left: 8px;
+    bottom: 8px;
+    width: 280px;
+}
+
+#panel-bottom-right {
+    right: 8px;
+    bottom: 8px;
+    width: 280px;
+}
+
+/* event log allows wrapping to accommodate 12 entries */
+#lbl-event-log {
+    white-space: normal;
+}
+
+/* ── Lifecycle overlay ── */
+.overlay {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    align-items: center;
+    justify-content: center;
+}
+
+.overlay-text {
+    background-color: #000000B8;   /* ~72% opaque black */
+    color: #FFFFFFFF;
+    font-size: 16px;
+    padding: 20px 32px;
+    white-space: normal;
+    -unity-text-align: middle-center;
+    min-width: 480px;
+    min-height: 160px;
+}
+
+.hidden {
+    display: none;
+}
