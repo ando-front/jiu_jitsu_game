@@ -3,7 +3,8 @@
     "rootNamespace": "BJJSimulator.EditorTools",
     "references": [
         "BJJSimulator",
-        "Unity.InputSystem"
+        "Unity.InputSystem",
+        "Unity.RenderPipelines.Universal.Runtime"
     ],
     "includePlatforms": [
         "Editor"
