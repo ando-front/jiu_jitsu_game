@@ -1,0 +1,16 @@
+{
+    "name": "BJJSimulator.EditorApi",
+    "rootNamespace": "BJJSimulator.EditorTools",
+    "references": [],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

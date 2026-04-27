@@ -2,7 +2,8 @@
     "name": "BJJSimulator",
     "rootNamespace": "BJJSimulator",
     "references": [
-        "Unity.InputSystem"
+        "Unity.InputSystem",
+        "Unity.RenderPipelines.Universal.Runtime"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
@@ -11,6 +12,12 @@
     "precompiledReferences": [],
     "autoReferenced": true,
     "defineConstraints": [],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.render-pipelines.universal",
+            "expression": "0.0.0",
+            "define": "BJJ_URP"
+        }
+    ],
     "noEngineReferences": false
 }
