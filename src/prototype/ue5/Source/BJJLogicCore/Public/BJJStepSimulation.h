@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 #include "BJJGameState.h"
 #include "BJJInputFrame.h"
+#include "BJJIntent.h"
+#include "BJJLayerB.h"
 #include "BJJStepSimulation.generated.h"
 
 USTRUCT(BlueprintType)
@@ -12,12 +14,18 @@ struct FBJJStepResult
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BJJ|Step")
     FBJJGameState NextState;
+
+    // Layer B output for this frame — exposed so downstream (animation
+    // driver / HUD / tests) can inspect Intent without re-running Layer B.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BJJ|Step")
+    FBJJIntent Intent;
 };
 
 class FBJJStepSimulation final
 {
 public:
-    // RealDtSeconds is sampled from platform time, GameDtScale allows judgment-window slow-down.
+    // RealDtSeconds is sampled from platform time; GameDtScale allows
+    // judgment-window slow-down.
     static FBJJStepResult Step(
         const FBJJGameState& PrevState,
         const FBJJInputFrame& InputFrame,
