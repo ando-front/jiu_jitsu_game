@@ -319,3 +319,38 @@ Platform 側（Camera / Audio / Scene）がこの `events` を購読する。
 - 複数プレイヤー対応（ローカル2人）の `GameState` 拡張
 - リプレイ機能の永続化フォーマット
 - AI 相手の `Intent` 生成器（攻め側 AI / 防御側 AI）の設計
+
+---
+
+## 10. Stage 2 キックオフ実装（2026-04-23）
+
+UE5 環境準備完了を受け、Stage 2 側に最小の Runtime モジュール骨格を追加した。
+
+- `src/prototype/ue5/Source/BJJLogicCore/BJJLogicCore.Build.cs`
+- `src/prototype/ue5/Source/BJJLogicCore/Public/BJJInputFrame.h`
+- `src/prototype/ue5/Source/BJJLogicCore/Public/BJJIntent.h`
+- `src/prototype/ue5/Source/BJJLogicCore/Public/BJJGameState.h`
+- `src/prototype/ue5/Source/BJJLogicCore/Public/BJJStepSimulation.h`
+- `src/prototype/ue5/Source/BJJLogicCore/Private/BJJStepSimulation.cpp`
+
+この時点の実装は「移植受け皿の初期化」が目的であり、完全な FSM 群移植は未了。
+
+### 10.1 役割
+
+- `FBJJInputFrame`: Stage 1 の Layer A 出力に対応する入力スナップショット
+- `FBJJIntent`: Stage 1 の Layer B 出力に対応する意図構造
+- `FBJJGameState`: Stage 1 `GameState` の最小サブセット（暫定）
+- `FBJJStepSimulation::Step`: Stage 2 版の `stepSimulation` 入口
+
+### 10.2 直近の移植順（推奨）
+
+1. `layerB.ts` の規則を `FBJJIntent` 生成ロジックへ完全移植
+2. `state/hand_fsm.ts`, `state/foot_fsm.ts`, `state/posture_break.ts`, `state/stamina.ts` を C++ 化
+3. `judgment_window.ts` と `control_layer.ts` を移植し、`FBJJStepResult` にイベント配列を追加
+4. UE Automation Test で Stage 1 シナリオと同一入力列リプレイを実施
+
+### 10.3 境界ルール
+
+- `BJJLogicCore` では Actor / Component 依存を避ける（Pure ロジック維持）
+- Enhanced Input, Animation Blueprint, Camera, PostProcess など Platform 実装は別モジュールに分離
+- Stage 1 と Stage 2 で同名の状態・イベントを維持し、差分検証を機械化する
