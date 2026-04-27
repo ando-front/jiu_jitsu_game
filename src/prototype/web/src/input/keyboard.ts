@@ -29,16 +29,22 @@ export type KeyboardSnapshot = Readonly<{
 
 export class KeyboardSource {
   private readonly pressed = new Set<string>();
+  // Wall-clock (performance.now) of the most recent tracked-key event.
+  // LayerA reads this to break ties against noisy gamepads that report
+  // ghost axis activity while the human is actually typing.
+  private lastEventMs: number = Number.NEGATIVE_INFINITY;
 
   attach(target: Window = window): () => void {
     const down = (e: KeyboardEvent) => {
       if (!TRACKED_KEYS.has(e.code)) return;
       this.pressed.add(e.code);
+      this.lastEventMs = performance.now();
       e.preventDefault();
     };
     const up = (e: KeyboardEvent) => {
       if (!TRACKED_KEYS.has(e.code)) return;
       this.pressed.delete(e.code);
+      this.lastEventMs = performance.now();
       e.preventDefault();
     };
     target.addEventListener("keydown", down);
@@ -53,6 +59,18 @@ export class KeyboardSource {
   setKeyForTest(code: string, down: boolean): void {
     if (down) this.pressed.add(code);
     else this.pressed.delete(code);
+    this.lastEventMs = performance.now();
+  }
+
+  // Most-recent tracked-key event timestamp (any key in TRACKED_KEYS,
+  // down OR up). Returns -Infinity if no key has ever been touched.
+  lastEventTimestampMs(): number {
+    return this.lastEventMs;
+  }
+
+  // Any tracked key currently held — used by LayerA for tie-breaking.
+  anyKeyHeld(): boolean {
+    return this.pressed.size > 0;
   }
 
   snapshot(): KeyboardSnapshot {

@@ -445,11 +445,14 @@ export function stepSimulation(
   });
 
   // 8. ControlLayer (presentation-only, see §7.3).
+  const defenderCutInProgress =
+    cutResult.next.left.kind === "IN_PROGRESS" ||
+    cutResult.next.right.kind === "IN_PROGRESS";
   const nextControl = updateControlLayer(prev.control, {
     judgmentWindow: finalJudgmentWindow,
     bottom: bottomAfterConfirm,
     top: topAfterCounter,
-    defenderCutInProgress: false,
+    defenderCutInProgress,
   });
 
   // 9. Pass attempt (§B.7). Commit eligibility depends on the FRESH actor

@@ -96,6 +96,364 @@
         font-size: 11px;
         color: #7b7b85;
       }
+      /* Rolling SimEvent log — bottom-right.
+         Shows the last ~12 sim events so transient outcomes
+         (GRIPPED / PARRIED / WINDOW_OPENING / TECHNIQUE_CONFIRMED / CUT_*)
+         can be read after the fact. Helps debugging "why didn't my
+         technique fire" without needing to scrub through a replay. */
+      #event-log {
+        position: absolute;
+        bottom: 60px;
+        right: 12px;
+        width: 280px;
+        max-height: 240px;
+        padding: 8px 10px;
+        background: rgba(0, 0, 0, 0.55);
+        border: 1px solid #2a2a30;
+        border-radius: 6px;
+        font-size: 11px;
+        line-height: 1.45;
+        color: #c6c8cc;
+        overflow: hidden;
+        pointer-events: none;
+      }
+      #event-log h3 {
+        margin: 0 0 6px;
+        font-size: 10px;
+        letter-spacing: 0.1em;
+        color: #9ea0ff;
+        text-transform: uppercase;
+      }
+      #event-log ul { margin: 0; padding: 0; list-style: none; }
+      #event-log li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      #event-log .t { color: #6a6d80; margin-right: 6px; }
+      #event-log .kGRIPPED, #event-log .kTECHNIQUE_CONFIRMED { color: #e4cf88; }
+      #event-log .kPARRIED, #event-log .kGRIP_BROKEN { color: #e88a5c; }
+      #event-log .kWINDOW_OPENING, #event-log .kWINDOW_OPEN { color: #f2e6a6; }
+      #event-log .kCOUNTER_WINDOW_OPENING, #event-log .kCOUNTER_CONFIRMED { color: #9ec9ff; }
+      #event-log .kCUT_STARTED { color: #c8a4ff; }
+      #event-log .kCUT_SUCCEEDED { color: #ff8aa4; }
+      #event-log .kCUT_FAILED { color: #7e7a90; }
+      #event-log .kPASS_STARTED { color: #9ec9ff; }
+      #event-log .kPASS_SUCCEEDED { color: #b4eaff; }
+      #event-log .kPASS_FAILED { color: #ffb080; }
+      #event-log .kSESSION_ENDED, #event-log .kGUARD_OPENED { color: #ff7070; }
+      #event-log .args { color: #a8a8ac; }
+      /* --- Coach checklist (どうしたら技がかかるか) ------------------- */
+      #coach {
+        position: absolute;
+        left: 12px;
+        bottom: 60px;
+        width: 320px;
+        padding: 10px 12px;
+        background: rgba(10, 12, 22, 0.78);
+        border: 1px solid #3a3f6a;
+        border-radius: 6px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: #d8dcf0;
+        pointer-events: none;
+        z-index: 25;
+      }
+      #coach .head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 6px;
+      }
+      #coach h3 {
+        margin: 0;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        color: #9ea0ff;
+        text-transform: uppercase;
+      }
+      #coach .target {
+        font-size: 13px;
+        font-weight: 600;
+        color: #f2e6a6;
+      }
+      #coach .switcher {
+        font-size: 10px;
+        color: #8d90a8;
+        margin-top: 2px;
+        margin-bottom: 6px;
+      }
+      #coach ul { margin: 0; padding: 0; list-style: none; }
+      #coach li {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        padding: 2px 0;
+      }
+      #coach li .mark { width: 14px; flex: 0 0 14px; text-align: center; }
+      #coach li .lbl { flex: 1 1 auto; }
+      #coach li .det { color: #8d90a8; font-size: 10px; white-space: nowrap; }
+      #coach li.met .mark { color: #88e0a0; }
+      #coach li.miss .mark { color: #e88a5c; }
+      #coach li.met .lbl { color: #b8dcc4; }
+      #coach li.miss .lbl { color: #e6e8f0; }
+      #coach .ready {
+        margin-top: 6px;
+        padding: 4px 8px;
+        background: rgba(120, 180, 100, 0.18);
+        border: 1px solid #6da080;
+        border-radius: 4px;
+        color: #c4f0d4;
+        font-size: 11px;
+        text-align: center;
+        letter-spacing: 0.05em;
+      }
+      /* --- Scenario picker (画面下部の技選択チップ) -------------------- */
+      #scenario-bar {
+        position: absolute;
+        bottom: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        justify-content: center;
+        max-width: 70vw;
+        padding: 6px 10px;
+        background: rgba(10, 12, 22, 0.7);
+        border: 1px solid #3a3f6a;
+        border-radius: 8px;
+        z-index: 25;
+      }
+      #scenario-bar .lbl {
+        font-size: 10px;
+        color: #8d90a8;
+        letter-spacing: 0.08em;
+        align-self: center;
+        margin-right: 4px;
+      }
+      #scenario-bar button {
+        font: inherit;
+        font-size: 11px;
+        padding: 4px 8px;
+        background: rgba(40, 44, 78, 0.85);
+        color: #d8dcf0;
+        border: 1px solid #4e52a4;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      #scenario-bar button:hover { background: rgba(60, 64, 110, 0.95); }
+      #scenario-bar button.active {
+        background: rgba(120, 100, 180, 0.55);
+        border-color: #c8b4ff;
+        color: #fff;
+      }
+      #scenario-bar button .key {
+        display: inline-block;
+        margin-right: 4px;
+        padding: 0 4px;
+        background: rgba(0, 0, 0, 0.35);
+        border-radius: 3px;
+        color: #f2e6a6;
+        font-size: 10px;
+      }
+      /* --- Input live-view (D2) — big readable bar of current inputs -- */
+      #input-live {
+        position: absolute;
+        right: 12px;
+        bottom: 320px;
+        width: 220px;
+        padding: 10px 12px;
+        background: rgba(10, 12, 22, 0.78);
+        border: 1px solid #3a3f6a;
+        border-radius: 6px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: #d8dcf0;
+        pointer-events: none;
+        z-index: 24;
+      }
+      #input-live h3 {
+        margin: 0 0 6px;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        color: #9ea0ff;
+        text-transform: uppercase;
+      }
+      #input-live .row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 3px 0;
+        font-size: 11px;
+      }
+      #input-live .label {
+        flex: 0 0 60px;
+        color: #a8acc4;
+      }
+      #input-live .bar {
+        flex: 1 1 auto;
+        position: relative;
+        height: 8px;
+        background: rgba(40, 44, 78, 0.7);
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      #input-live .bar .fill {
+        position: absolute;
+        top: 0; bottom: 0; left: 0;
+        background: linear-gradient(90deg, #6fd0ff 0%, #f2cf5c 70%, #ff6a4a 100%);
+        transition: width 60ms linear;
+      }
+      #input-live .bar .center {
+        position: absolute;
+        top: -1px; bottom: -1px;
+        left: 50%;
+        width: 1px;
+        background: rgba(255, 255, 255, 0.2);
+      }
+      #input-live .bar .signed {
+        position: absolute;
+        top: 0; bottom: 0;
+        background: #6fd0ff;
+        transition: width 60ms linear, left 60ms linear;
+      }
+      #input-live .val {
+        flex: 0 0 30px;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        color: #c4c8e0;
+      }
+      #input-live .pills {
+        display: flex;
+        gap: 4px;
+        flex-wrap: wrap;
+        margin-top: 6px;
+      }
+      #input-live .pill {
+        padding: 1px 6px;
+        border-radius: 8px;
+        font-size: 10px;
+        background: rgba(40, 44, 78, 0.7);
+        color: #8d90a8;
+        border: 1px solid #3a3f6a;
+      }
+      #input-live .pill.on {
+        background: rgba(120, 180, 100, 0.3);
+        color: #c4f0d4;
+        border-color: #6da080;
+      }
+      /* --- Tutorial overlay (日本語) ---------------------------------- */
+      #tutorial-toggle {
+        position: absolute;
+        bottom: 12px;
+        right: 12px;
+        padding: 8px 14px;
+        background: rgba(32, 34, 56, 0.85);
+        border: 1px solid #4e52a4;
+        border-radius: 6px;
+        color: #e6e8ff;
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+        z-index: 30;
+      }
+      #tutorial-toggle:hover {
+        background: rgba(52, 56, 92, 0.95);
+      }
+      #tutorial {
+        position: absolute;
+        inset: 0;
+        display: none;
+        background: rgba(6, 6, 10, 0.94);
+        color: #e6e6ea;
+        z-index: 60;
+        overflow-y: auto;
+        padding: 32px;
+        font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP",
+                     ui-monospace, Menlo, Consolas, monospace;
+        font-size: 14px;
+        line-height: 1.7;
+      }
+      #tutorial.open { display: block; }
+      #tutorial .inner {
+        max-width: 880px;
+        margin: 0 auto;
+        padding-bottom: 80px;
+      }
+      #tutorial h1 {
+        font-size: 24px;
+        margin: 0 0 4px;
+        letter-spacing: 0.05em;
+        color: #d8d8ff;
+      }
+      #tutorial .sub {
+        margin: 0 0 28px;
+        font-size: 12px;
+        color: #8d90a8;
+        letter-spacing: 0.08em;
+      }
+      #tutorial h2 {
+        margin: 32px 0 8px;
+        padding: 6px 10px;
+        border-left: 3px solid #7c80d4;
+        background: rgba(40, 44, 78, 0.5);
+        font-size: 16px;
+        color: #cfd3ff;
+      }
+      #tutorial h3 {
+        margin: 18px 0 6px;
+        font-size: 13px;
+        color: #b8bce0;
+        letter-spacing: 0.05em;
+      }
+      #tutorial p { margin: 6px 0; color: #d2d4dc; }
+      #tutorial ul, #tutorial ol {
+        margin: 6px 0 12px 24px;
+        color: #c8cad2;
+      }
+      #tutorial li { margin: 3px 0; }
+      #tutorial b, #tutorial strong { color: #f2e6a6; font-weight: 600; }
+      #tutorial code {
+        background: rgba(54, 58, 92, 0.55);
+        padding: 0 4px;
+        border-radius: 3px;
+        font-size: 12px;
+        color: #d0d4f0;
+      }
+      #tutorial table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 8px 0 16px;
+        font-size: 12px;
+      }
+      #tutorial th, #tutorial td {
+        padding: 6px 8px;
+        border: 1px solid #33365c;
+        text-align: left;
+        vertical-align: top;
+      }
+      #tutorial th {
+        background: rgba(46, 50, 82, 0.7);
+        color: #e2e4f2;
+      }
+      #tutorial td.k { color: #e4cf88; white-space: nowrap; }
+      #tutorial td.p { color: #88c4e4; white-space: nowrap; }
+      #tutorial .close-hint {
+        position: fixed;
+        top: 14px;
+        right: 22px;
+        padding: 6px 12px;
+        background: rgba(60, 64, 98, 0.9);
+        border-radius: 4px;
+        font-size: 12px;
+        color: #d2d4e8;
+      }
+      #tutorial .pill {
+        display: inline-block;
+        padding: 1px 8px;
+        margin-right: 4px;
+        border-radius: 10px;
+        background: rgba(80, 84, 130, 0.4);
+        color: #d4d6ea;
+        font-size: 11px;
+      }
     </style>
   </head>
   <body>
@@ -146,6 +504,371 @@
 
       <div id="device-hint">
         Stage 1 Prototype · Gamepad (Xbox/DualSense) or WASD/Arrows/F/J
+      </div>
+
+      <div id="event-log">
+        <h3>Event log</h3>
+        <ul id="event-log-list"></ul>
+      </div>
+
+      <div id="input-live">
+        <h3>Input live</h3>
+        <div class="row">
+          <span class="label">L-stick X</span>
+          <div class="bar"><div class="center"></div><div class="signed" id="il-lsx"></div></div>
+          <span class="val" id="il-lsx-v">0.00</span>
+        </div>
+        <div class="row">
+          <span class="label">L-stick Y</span>
+          <div class="bar"><div class="center"></div><div class="signed" id="il-lsy"></div></div>
+          <span class="val" id="il-lsy-v">0.00</span>
+        </div>
+        <div class="row">
+          <span class="label">R-stick X</span>
+          <div class="bar"><div class="center"></div><div class="signed" id="il-rsx"></div></div>
+          <span class="val" id="il-rsx-v">0.00</span>
+        </div>
+        <div class="row">
+          <span class="label">R-stick Y</span>
+          <div class="bar"><div class="center"></div><div class="signed" id="il-rsy"></div></div>
+          <span class="val" id="il-rsy-v">0.00</span>
+        </div>
+        <div class="row">
+          <span class="label">L-Trig (F)</span>
+          <div class="bar"><div class="fill" id="il-lt"></div></div>
+          <span class="val" id="il-lt-v">0.00</span>
+        </div>
+        <div class="row">
+          <span class="label">R-Trig (J)</span>
+          <div class="bar"><div class="fill" id="il-rt"></div></div>
+          <span class="val" id="il-rt-v">0.00</span>
+        </div>
+        <div class="pills" id="il-pills"></div>
+      </div>
+
+      <div id="coach">
+        <div class="head">
+          <h3>次の技 — 条件チェック</h3>
+          <span id="coach-target" class="target">SCISSOR_SWEEP</span>
+        </div>
+        <div class="switcher">下のチップで技を切替 / 1–7 で練習シナリオ</div>
+        <ul id="coach-list"></ul>
+        <div id="coach-ready" class="ready" style="display:none;">
+          条件成立 → 判断窓が開きます
+        </div>
+      </div>
+
+      <div id="scenario-bar">
+        <span class="lbl">PRACTICE</span>
+        <button tabindex="-1" data-scenario="SCISSOR_READY"><span class="key">1</span>ハサミ</button>
+        <button tabindex="-1" data-scenario="FLOWER_READY"><span class="key">2</span>フラワー</button>
+        <button tabindex="-1" data-scenario="TRIANGLE_READY"><span class="key">3</span>三角</button>
+        <button tabindex="-1" data-scenario="OMOPLATA_READY"><span class="key">4</span>オモプラ</button>
+        <button tabindex="-1" data-scenario="HIP_BUMP_READY"><span class="key">5</span>ヒップバンプ</button>
+        <button tabindex="-1" data-scenario="CROSS_COLLAR_READY"><span class="key">6</span>十字</button>
+        <button tabindex="-1" data-scenario="PASS_DEFENSE"><span class="key">7</span>パス防御</button>
+        <button tabindex="-1" data-scenario="__reset"><span class="key">0</span>対戦</button>
+      </div>
+
+      <div id="pause-overlay" role="dialog" aria-modal="true"
+           style="position:absolute; inset:0; display:none; align-items:center;
+                  justify-content:center; gap:14px; flex-direction:column;
+                  background:rgba(8,8,12,0.82); color:#e6e6ea; z-index:55;
+                  font-family:ui-monospace, Menlo, Consolas, monospace;
+                  text-align:center; padding:24px;">
+        <div style="font-size:15px; letter-spacing:0.2em; opacity:0.65;">PAUSED</div>
+        <div style="font-size:32px; font-weight:600;">一時停止中</div>
+        <div style="font-size:12px; opacity:0.55;">
+          <b>Esc</b> または <b>Options</b> ボタンで再開
+        </div>
+      </div>
+
+      <button id="tutorial-toggle" type="button" tabindex="-1">? チュートリアル [H]</button>
+
+      <div id="tutorial" role="dialog" aria-modal="true" aria-labelledby="tutorial-title">
+        <div class="close-hint">[H] または画面右下のボタンで閉じる</div>
+        <div class="inner">
+          <h1 id="tutorial-title">柔術シミュレータ — 遊び方ガイド</h1>
+          <p class="sub">Stage 1 プロトタイプ / M1 スコープ = クローズドガードの攻防のみ</p>
+
+          <h2>1. このゲームについて</h2>
+          <p>
+            本作はブラジリアン柔術(BJJ)の <b>クローズドガード</b> という局面を再現した対戦シミュレータです。
+            下になっている側(<b>BOTTOM</b>)は両足で相手の腰をロックしながらスイープや関節技を狙い、
+            上になっている側(<b>TOP</b>)は姿勢を維持しつつ技を切り、ガードをパスしようとします。
+          </p>
+          <p>
+            このプロトタイプはロジック検証用の簡易版で、見た目はブロックマンですが、
+            判定・タイミング・条件は実際の競技ルール(IBJJF/ADCC)を意識した設計になっています。
+          </p>
+
+          <h2>2. 役割を選ぶ</h2>
+          <p>
+            開始画面で <b>L-Stick 左右</b>(または <b>A / D キー</b>)で <b>BOTTOM → TOP → SPECTATE</b> を循環選択し、
+            <b>A ボタン</b>(または <b>Space</b>)で決定します。
+          </p>
+          <ul>
+            <li><b>BOTTOM(攻め側)</b> — クローズドガードを維持し、スイープや関節技でラウンドを取る。TOPはAI。</li>
+            <li><b>TOP(防御側)</b> — 姿勢を戻し、攻めの手を切り(カット)、最後にガードを<b>パス</b>する。BOTTOMはAI。</li>
+            <li><b>SPECTATE(観戦)</b> — 両側ともAIで進行するのを観察するモード。
+              ラウンド終了時には <b>2秒後に自動で再開</b> します。ロジック検証やAIの癖の観察、放置ストレステストに使えます。</li>
+          </ul>
+
+          <h2>3. 操作方法</h2>
+          <h3>共通キーバインド</h3>
+          <table>
+            <tr><th>キー</th><th>パッド</th><th>役割</th></tr>
+            <tr><td class="k">W / A / S / D</td><td class="p">L-Stick</td><td>腰/体重の向き・押し込み</td></tr>
+            <tr><td class="k">↑ ← ↓ →</td><td class="p">R-Stick</td><td>グリップ狙い/カット方向</td></tr>
+            <tr><td class="k">F</td><td class="p">L-Trigger</td><td>左手のグリップ強度/基点圧</td></tr>
+            <tr><td class="k">J</td><td class="p">R-Trigger</td><td>右手のグリップ強度/基点圧</td></tr>
+            <tr><td class="k">R</td><td class="p">L-Bumper</td><td>左足フック/左手カット試行</td></tr>
+            <tr><td class="k">U</td><td class="p">R-Bumper</td><td>右足フック/右手カット試行</td></tr>
+            <tr><td class="k">Space</td><td class="p">A / ✕</td><td>ベース維持・三角絞めコミット</td></tr>
+            <tr><td class="k">X</td><td class="p">B / ◯</td><td>全グリップ解放</td></tr>
+            <tr><td class="k">C</td><td class="p">Y / △</td><td>呼吸(スタミナ回復)</td></tr>
+            <tr><td class="k">V</td><td class="p">X / □</td><td>TOP:パスコミット/BOTTOM:未使用</td></tr>
+            <tr><td class="k">H</td><td class="p">-</td><td>このチュートリアルを開閉</td></tr>
+            <tr><td class="k">Esc</td><td class="p">Options</td><td>一時停止 / 再開</td></tr>
+            <tr><td class="k">1–7</td><td class="p">-</td><td>練習シナリオ読込(§12)</td></tr>
+            <tr><td class="k">0</td><td class="p">-</td><td>シナリオなしでリセット</td></tr>
+          </table>
+
+          <h3>BOTTOM(攻め)の意図</h3>
+          <ul>
+            <li><b>L-Stick 左右</b> = 腰を横に振る(ハサミスイープの軸作り)</li>
+            <li><b>L-Stick 上</b> = 腰を前に突き出す(ヒップバンプ・フラワーの軸作り)</li>
+            <li><b>R-Stick</b> = グリップのターゲットゾーン選択(↑ COLLAR / ↓ SLEEVE / ← 襟左 / → 袖右 など)</li>
+            <li><b>F / J</b> = 左右のトリガー。握りの強さ。強く握るほど崩しに寄与し、スタミナを使う</li>
+            <li><b>R / U</b> = 左右のフック(足)をロック/解除。両足UNLOCKED = ガード崩壊</li>
+          </ul>
+
+          <h3>TOP(防御)の意図</h3>
+          <ul>
+            <li><b>L-Stick</b> = 体重を前方/側方へ掛ける(<code>weight_forward</code> / <code>weight_lateral</code> = 姿勢崩しの相殺)</li>
+            <li><b>F / J</b> = 左右の手で相手の胸・腰・二頭筋・膝を押さえる(基点圧)</li>
+            <li><b>R / U</b> + <b>R-Stick</b> = カット試行。R-Stickの向きで攻め側のどの手を狙うか決まる</li>
+            <li><b>V</b> = パスコミット。条件を満たしているときだけ成立する</li>
+          </ul>
+
+          <h2>4. グリップと手の状態(HandFSM)</h2>
+          <p>各手は下記の6状態を遷移します。</p>
+          <table>
+            <tr><th>状態</th><th>意味</th></tr>
+            <tr><td><b>IDLE</b></td><td>胸前の中立位置。次の動作待ち</td></tr>
+            <tr><td><b>REACHING</b></td><td>ターゲットへ移動中(200–350ms、距離依存)</td></tr>
+            <tr><td><b>CONTACT</b></td><td>1フレームのみ接触判定</td></tr>
+            <tr><td><b>GRIPPED</b></td><td>握っている。強度はトリガー値に追従</td></tr>
+            <tr><td><b>PARRIED</b></td><td>弾かれた瞬間。即座にRETRACTへ</td></tr>
+            <tr><td><b>RETRACT</b></td><td>中立へ戻り中(150ms)。この間は再REACH不可</td></tr>
+          </table>
+          <p>
+            CONTACT での分岐ルール:
+          </p>
+          <ol>
+            <li>相手が同じゾーンを手で防御中 → <b>PARRIED</b></li>
+            <li>直近 <b>400ms</b> 以内に同手×同ゾーンで弾かれた → <b>PARRIED</b></li>
+            <li>それ以外 → <b>GRIPPED</b></li>
+          </ol>
+          <p>つまり「同じ手で同じ場所を連打してもすぐに取れない」。逆手か別ゾーンに切り替えるのが正解です。</p>
+
+          <h2>5. 姿勢崩し(Posture Break)</h2>
+          <p>
+            攻めの本質は「崩しの条件を作ってから技に入る」こと。崩しは2次元ベクトル <code>(lateral, sagittal)</code> で表されます。
+          </p>
+          <ul>
+            <li><b>lateral</b>(横) = -1(左へ崩す) 〜 +1(右へ崩す)</li>
+            <li><b>sagittal</b>(前後) = -1(後傾)〜 +1(前傾、顔が膝に近づく)</li>
+          </ul>
+          <p>崩しに寄与する要素:</p>
+          <ul>
+            <li>攻め側の腰入力(L-Stick の方向×押し込み量)</li>
+            <li>GRIPPED 中の手の引き寄せ(ゾーンごとに方向ベクトルが決まっている)</li>
+            <li>防御側の <code>weight_forward</code> / <code>weight_lateral</code> は<b>逆方向に相殺</b>する</li>
+            <li>何もしない時間 — <b>時定数 800ms</b> で原点に戻る</li>
+          </ul>
+
+          <h2>6. 判断窓(Judgment Window)</h2>
+          <p>
+            発動条件を満たすと <b>判断窓</b> が開きます。画面が黄色くパルスし、スローモーション(×0.3)になる時間です。
+          </p>
+          <table>
+            <tr><th>状態</th><th>時間</th><th>タイムスケール</th></tr>
+            <tr><td>CLOSED</td><td>不定</td><td>100%</td></tr>
+            <tr><td>OPENING</td><td>0.2s</td><td>100% → 30%</td></tr>
+            <tr><td><b>OPEN</b></td><td>最大 1.5s</td><td>30%</td></tr>
+            <tr><td>CLOSING</td><td>0.3s</td><td>30% → 100%</td></tr>
+            <tr><td>クールダウン</td><td>0.4s</td><td>100%(新規OPENING不可)</td></tr>
+          </table>
+          <p>
+            <b>重要</b>: 入力は常に実時間(60Hz)でポーリングされるので、スローモ中も指の反応は普通どおり効きます。
+            迷ったら <b>X(全グリップ解放)</b> で窓を見送ることもできます。
+          </p>
+
+          <h2>7. カウンター窓(Counter Window)</h2>
+          <p>
+            攻め側の判断窓が開いた瞬間、防御側にも <b>カウンター窓</b> が開きます(画面は水色)。
+            攻めの技ごとに対応する返し技があり、タイミング入力で攻めを無効化できます。
+          </p>
+          <table>
+            <tr><th>攻めの技</th><th>対応カウンター</th><th>入力(TOP側)</th></tr>
+            <tr>
+              <td>SCISSOR_SWEEP</td>
+              <td>SCISSOR_COUNTER</td>
+              <td>L-Stick を<b>スイープ方向と逆</b>に最大</td>
+            </tr>
+            <tr>
+              <td>TRIANGLE</td>
+              <td>TRIANGLE_EARLY_STACK</td>
+              <td>L-Stick 上 + <b>Space (BTN_BASE) ホールド</b></td>
+            </tr>
+          </table>
+          <p>カウンター成立時は攻めの判断窓が強制的にCLOSINGへ移行。TRIANGLE_EARLY_STACK は「腕引き出し」フラグも両側リセットします。</p>
+
+          <h2>8. 技一覧と発動条件</h2>
+          <table>
+            <tr><th>技</th><th>条件</th></tr>
+            <tr>
+              <td><b>ハサミスイープ</b></td>
+              <td>両足 LOCKED + 左右いずれかの SLEEVE を強度 0.6 以上で GRIPPED + <code>‖break‖ ≥ 0.4</code></td>
+            </tr>
+            <tr>
+              <td><b>フラワースイープ</b></td>
+              <td>両足 LOCKED + WRIST GRIPPED + 前崩し <code>sagittal ≥ 0.5</code></td>
+            </tr>
+            <tr>
+              <td><b>三角絞め</b></td>
+              <td>片足 UNLOCKED + 「腕引き出し」フラグON + COLLAR GRIPPED</td>
+            </tr>
+            <tr>
+              <td><b>オモプラッタ</b></td>
+              <td>片手 SLEEVE GRIPPED + 前崩し 0.6+(向きが同じ)+ 腰回転 <code>|hip_yaw| ≥ π/3</code></td>
+            </tr>
+            <tr>
+              <td><b>ヒップバンプ</b></td>
+              <td>前崩し 0.7+ と腰押し 0.5+ を <b>300ms 連続維持</b></td>
+            </tr>
+            <tr>
+              <td><b>十字絞め</b></td>
+              <td>両 COLLAR を強度 0.7+ で GRIPPED + <code>‖break‖ ≥ 0.5</code></td>
+            </tr>
+          </table>
+          <h3>「腕引き出し」について</h3>
+          <p>
+            三角絞めの前提となるフラグ。<b>WRIST / SLEEVE を強度 0.6+ で GRIPPED のまま、hip_pull 方向に 1.5 秒継続して引く</b>と ON になります。
+            一瞬のグリップでは発生しません。TOPが二頭筋へのベース圧、または RECOVERY_HOLD をかけると強制解除されます。
+          </p>
+
+          <h2>9. スタミナ</h2>
+          <p>各プレイヤーは <code>stamina: 0〜1</code> を持ちます。1.0 が完全回復、0.0 が行動不能。</p>
+          <h3>消費</h3>
+          <ul>
+            <li>手が REACHING または GRIPPED(強度 0.5+) = <code>-0.02/秒</code></li>
+            <li>崩しを維持している状態 = <code>-0.05 × ‖break‖ /秒</code>(攻め側)</li>
+            <li>技確定 = 一括 <code>-0.1</code></li>
+            <li>TOPの基点圧/体重配分 = 継続使用で緩やかに消費</li>
+          </ul>
+          <h3>回復</h3>
+          <ul>
+            <li><b>C(Breath)</b> + 全グリップなし + 腰静止 = <code>+0.1/秒</code></li>
+            <li>全四肢 IDLE + グリップなし = <code>+0.03/秒</code></li>
+          </ul>
+          <h3>クランプ(上限制約)</h3>
+          <ul>
+            <li><b>stamina &lt; 0.2</b> — トリガー強度の上限が <b>0.6</b>(十字絞めなど 0.7+ 条件が満たせない)</li>
+            <li><b>stamina &lt; 0.05</b> — 新規 REACHING 不可(既に握っている手は維持できる)</li>
+          </ul>
+
+          <h2>10. 勝敗条件</h2>
+          <p>ラウンドは次のいずれかで終了します:</p>
+          <ul>
+            <li><span class="pill">BOTTOM勝利</span> 判断窓で <b>技を確定</b>(スイープ・関節技いずれか)</li>
+            <li><span class="pill">TOP勝利</span> 条件を満たして <b>パス成立</b></li>
+            <li><span class="pill">終了</span> 両足 UNLOCKED = ガードが開く(M1スコープ外のスクランブル扱い)</li>
+          </ul>
+          <p>終了後、画面に結果が表示され、<b>A / Space</b> でセッションをリスタートできます。</p>
+
+          <h2>11. ラウンドタイマー・一時停止・カラーグレーディング</h2>
+          <h3>ラウンドタイマー</h3>
+          <p>
+            ラウンドは <b>5 分</b> の制限時間があり、左上HUDに <code>round m:ss</code> 形式でカウントダウンが出ます(IBJJFアダルト白帯/青帯のマッチ長に整合)。
+            タイマーが 0 になると <code>TIME UP — ROUND OVER</code> が表示され、セッション終了扱いになります。
+            <b>A / Space</b> で再開。
+          </p>
+
+          <h3>一時停止</h3>
+          <p>
+            <b>Esc</b>(または <b>Options</b> ボタン)でシムを一時停止できます。もう一度押すと再開。
+            チュートリアルを開いている間もシムは止まりますが、こちらは「じっくり考えたいとき」用の明示的なポーズです。
+          </p>
+
+          <h3>スタミナのカラーグレーディング(§5.4)</h3>
+          <p>
+            <b>プレイヤー側のスタミナが消耗する</b>と、画面の縁がじわりと暖色(オレンジ)に寄り、呼吸の重さが視覚的に伝わります。
+            Stage 2 (UE5) で目指す <b>HUDなしの状態伝達</b> の縮小版で、Stage 1 では暖色シフトだけに絞っています。
+          </p>
+          <ul>
+            <li>BOTTOM ロールでは <code>bottom.stamina</code> を見る</li>
+            <li>TOP ロールでは <code>top.stamina</code> を見る</li>
+            <li>SPECTATE では両側の min(より消耗しているほう)を見る</li>
+          </ul>
+          <p>0.6 付近から緩やかに色が乗り始め、0.15 以下でフル暖色になります。</p>
+
+          <h2>12. 練習シナリオ(デバッグ用)</h2>
+          <p>
+            開発/検証用に、特定の技が出せる直前の状態を即座にロードできます。
+            ゲーム中に数字キーを押すと切り替わります。
+          </p>
+          <table>
+            <tr><th>キー</th><th>シナリオ</th><th>内容</th></tr>
+            <tr><td class="k">1</td><td><b>SCISSOR_READY</b></td>
+              <td>両足 LOCKED + 左手 SLEEVE_R GRIPPED + 横崩し 0.5。L-Stick を横に倒すだけで SCISSOR_SWEEP 窓が開く。</td></tr>
+            <tr><td class="k">2</td><td><b>FLOWER_READY</b></td>
+              <td>両足 LOCKED + 右手 WRIST_L GRIPPED + 前崩し 0.6。次フレームで FLOWER_SWEEP 条件成立。</td></tr>
+            <tr><td class="k">3</td><td><b>TRIANGLE_READY</b></td>
+              <td>左足 UNLOCKED + 左手 COLLAR_R GRIPPED + top.armExtractedRight=true。TRIANGLE 条件成立済み。</td></tr>
+            <tr><td class="k">4</td><td><b>OMOPLATA_READY</b></td>
+              <td>左手 SLEEVE_R GRIPPED + 前崩し 0.7 + 横崩し -0.4(符号一致)。L-Stick を左に倒して腰を π/3 以上ひねると OMOPLATA 窓が開く。</td></tr>
+            <tr><td class="k">5</td><td><b>HIP_BUMP_READY</b></td>
+              <td>前崩し 0.8 + sustainedHipPushMs=350ms(300ms 閾値突破済)。L-Stick 前 + 押し続けで即 HIP_BUMP。</td></tr>
+            <tr><td class="k">6</td><td><b>CROSS_COLLAR_READY</b></td>
+              <td>両 COLLAR GRIPPED + 崩し 0.5+。両トリガーを最大で十字絞め判断窓に乗る。</td></tr>
+            <tr><td class="k">7</td><td><b>PASS_DEFENSE</b></td>
+              <td>TOP視点の防御練習。BOTTOM片足 UNLOCKED、スタミナ消耗気味でパスが決まる一歩手前。</td></tr>
+            <tr><td class="k">0</td><td><b>(reset)</b></td><td>ニュートラル状態に戻す。シナリオなしの対戦へ。</td></tr>
+          </table>
+          <p>
+            シナリオ中は左上HUDに <code>scenario SCISSOR_READY</code> のように表示されます。
+            技の発火条件にバグが疑われたとき、対応するシナリオをロードしてすぐ再現できます。
+          </p>
+
+          <h2>13. 画面UIの読み方</h2>
+          <ul>
+            <li><b>左上のHUD</b> — Layer A / Layer B / ActorState / GameStateを文字で表示する開発用ダッシュボード。数値で挙動を確かめられる。</li>
+            <li><b>右上のLegend</b> — キー割り当て一覧。</li>
+            <li><b>右下のEvent log</b> — 直近 <b>12件</b> のSimEventを秒単位のエイジ付きで表示します。色は種類別:
+              <ul>
+                <li><span style="color:#e4cf88;">GRIPPED / TECHNIQUE_CONFIRMED</span></li>
+                <li><span style="color:#e88a5c;">PARRIED / GRIP_BROKEN</span></li>
+                <li><span style="color:#f2e6a6;">WINDOW_OPENING</span>(攻め側の判断窓)</li>
+                <li><span style="color:#9ec9ff;">COUNTER_WINDOW_OPENING / COUNTER_CONFIRMED</span></li>
+                <li><span style="color:#c8a4ff;">CUT_STARTED</span>、<span style="color:#ff8aa4;">CUT_SUCCEEDED</span>、<span style="color:#7e7a90;">CUT_FAILED</span></li>
+                <li><span style="color:#ff7070;">GUARD_OPENED / SESSION_ENDED</span></li>
+              </ul>
+              スローモ中の派手なフラッシュを見逃しても、ここで後から何が起きたか追えます。
+            </li>
+            <li><b>画面色</b> — 黄パルス=判断窓、水色パルス=カウンター窓、赤フラッシュ=ガード開け。</li>
+          </ul>
+
+          <h2>14. 上達のヒント</h2>
+          <ol>
+            <li><b>最初は軽い崩し + 1グリップから</b>。いきなり両グリップを狙うと弾かれて短期記憶で取れなくなります。</li>
+            <li><b>崩しは消える</b>ので、グリップと腰入力をセットで維持すること。</li>
+            <li><b>判断窓はスローモ</b>なので焦らない。見送っても 0.4s のクールダウン後にまた狙える。</li>
+            <li><b>TOP側のカット</b>は R-Stick の向きが重要。相手の握っている手を狙わないと不発。</li>
+            <li><b>スタミナが少ない</b>と高強度技(十字絞めなど)が出せなくなるので、不利なら呼吸で立て直す。</li>
+          </ol>
+        </div>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

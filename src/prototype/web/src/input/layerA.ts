@@ -23,7 +23,20 @@ export class LayerA {
     const pad = this.gamepad.snapshot();
     const kb = this.keyboard.snapshot();
 
-    const useGamepad = pad.connected && this.gamepadHasActivity(pad);
+    // Keyboard wins if the user has touched the keyboard recently OR is
+    // currently holding any tracked key. This protects against noisy
+    // gamepads (e.g. broken IR remotes that report axes pinned at -1)
+    // that would otherwise make `gamepadHasActivity` permanently true
+    // and silently lock keyboard input out. Window picked to outlast a
+    // single rAF but not so long that releasing the keyboard leaves the
+    // pad ignored forever.
+    const KB_RECENT_MS = 1500;
+    const kbActive =
+      this.keyboard.anyKeyHeld() ||
+      (nowMs - this.keyboard.lastEventTimestampMs()) < KB_RECENT_MS;
+
+    const useGamepad =
+      pad.connected && this.gamepadHasActivity(pad) && !kbActive;
     const device_kind: DeviceKind = useGamepad ? pad.device_kind : "Keyboard";
 
     const ls = useGamepad

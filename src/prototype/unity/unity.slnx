@@ -1,0 +1,4 @@
+﻿<Solution>
+  <Project Path="BJJSimulator.Tests.csproj" />
+  <Project Path="BJJSimulator.csproj" />
+</Solution>

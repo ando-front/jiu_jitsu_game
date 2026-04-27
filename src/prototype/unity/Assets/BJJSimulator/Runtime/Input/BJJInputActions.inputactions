@@ -1,0 +1,167 @@
+{
+    "name": "BJJInputActions",
+    "maps": [
+        {
+            "name": "Player",
+            "id": "00000000-0000-0000-0000-000000000001",
+            "actions": [
+                {
+                    "name": "LeftStick",
+                    "type": "Value",
+                    "id": "10000000-0000-0000-0000-000000000001",
+                    "expectedControlType": "Vector2",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": true
+                },
+                {
+                    "name": "RightStick",
+                    "type": "Value",
+                    "id": "10000000-0000-0000-0000-000000000002",
+                    "expectedControlType": "Vector2",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": true
+                },
+                {
+                    "name": "LeftTrigger",
+                    "type": "Value",
+                    "id": "10000000-0000-0000-0000-000000000003",
+                    "expectedControlType": "Axis",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": true
+                },
+                {
+                    "name": "RightTrigger",
+                    "type": "Value",
+                    "id": "10000000-0000-0000-0000-000000000004",
+                    "expectedControlType": "Axis",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": true
+                },
+                {
+                    "name": "LeftBumper",
+                    "type": "Button",
+                    "id": "10000000-0000-0000-0000-000000000005",
+                    "expectedControlType": "Button",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "RightBumper",
+                    "type": "Button",
+                    "id": "10000000-0000-0000-0000-000000000006",
+                    "expectedControlType": "Button",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "BtnBase",
+                    "type": "Button",
+                    "id": "10000000-0000-0000-0000-000000000007",
+                    "expectedControlType": "Button",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "BtnRelease",
+                    "type": "Button",
+                    "id": "10000000-0000-0000-0000-000000000008",
+                    "expectedControlType": "Button",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "BtnBreath",
+                    "type": "Button",
+                    "id": "10000000-0000-0000-0000-000000000009",
+                    "expectedControlType": "Button",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "BtnReserved",
+                    "type": "Button",
+                    "id": "10000000-0000-0000-0000-00000000000a",
+                    "expectedControlType": "Button",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "BtnPause",
+                    "type": "Button",
+                    "id": "10000000-0000-0000-0000-00000000000b",
+                    "expectedControlType": "Button",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                }
+            ],
+            "bindings": [
+                {
+                    "name": "WASD",
+                    "id": "20000000-0000-0000-0000-000000000001",
+                    "path": "2DVector",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "LeftStick",
+                    "isComposite": true,
+                    "isPartOfComposite": false
+                },
+                { "name": "up",    "id": "20000000-0000-0000-0000-000000000002", "path": "<Keyboard>/w",      "interactions": "", "processors": "", "groups": "", "action": "LeftStick", "isComposite": false, "isPartOfComposite": true },
+                { "name": "down",  "id": "20000000-0000-0000-0000-000000000003", "path": "<Keyboard>/s",      "interactions": "", "processors": "", "groups": "", "action": "LeftStick", "isComposite": false, "isPartOfComposite": true },
+                { "name": "left",  "id": "20000000-0000-0000-0000-000000000004", "path": "<Keyboard>/a",      "interactions": "", "processors": "", "groups": "", "action": "LeftStick", "isComposite": false, "isPartOfComposite": true },
+                { "name": "right", "id": "20000000-0000-0000-0000-000000000005", "path": "<Keyboard>/d",      "interactions": "", "processors": "", "groups": "", "action": "LeftStick", "isComposite": false, "isPartOfComposite": true },
+                { "name": "",      "id": "20000000-0000-0000-0000-000000000006", "path": "<Gamepad>/leftStick", "interactions": "", "processors": "", "groups": "", "action": "LeftStick", "isComposite": false, "isPartOfComposite": false },
+
+                {
+                    "name": "Arrows",
+                    "id": "20000000-0000-0000-0000-000000000010",
+                    "path": "2DVector",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "RightStick",
+                    "isComposite": true,
+                    "isPartOfComposite": false
+                },
+                { "name": "up",    "id": "20000000-0000-0000-0000-000000000011", "path": "<Keyboard>/upArrow",    "interactions": "", "processors": "", "groups": "", "action": "RightStick", "isComposite": false, "isPartOfComposite": true },
+                { "name": "down",  "id": "20000000-0000-0000-0000-000000000012", "path": "<Keyboard>/downArrow",  "interactions": "", "processors": "", "groups": "", "action": "RightStick", "isComposite": false, "isPartOfComposite": true },
+                { "name": "left",  "id": "20000000-0000-0000-0000-000000000013", "path": "<Keyboard>/leftArrow",  "interactions": "", "processors": "", "groups": "", "action": "RightStick", "isComposite": false, "isPartOfComposite": true },
+                { "name": "right", "id": "20000000-0000-0000-0000-000000000014", "path": "<Keyboard>/rightArrow", "interactions": "", "processors": "", "groups": "", "action": "RightStick", "isComposite": false, "isPartOfComposite": false },
+                { "name": "",      "id": "20000000-0000-0000-0000-000000000015", "path": "<Gamepad>/rightStick",  "interactions": "", "processors": "", "groups": "", "action": "RightStick", "isComposite": false, "isPartOfComposite": false },
+
+                { "name": "", "id": "20000000-0000-0000-0000-000000000020", "path": "<Keyboard>/f",            "interactions": "", "processors": "", "groups": "", "action": "LeftTrigger",  "isComposite": false, "isPartOfComposite": false },
+                { "name": "", "id": "20000000-0000-0000-0000-000000000021", "path": "<Gamepad>/leftTrigger",   "interactions": "", "processors": "", "groups": "", "action": "LeftTrigger",  "isComposite": false, "isPartOfComposite": false },
+                { "name": "", "id": "20000000-0000-0000-0000-000000000022", "path": "<Keyboard>/j",            "interactions": "", "processors": "", "groups": "", "action": "RightTrigger", "isComposite": false, "isPartOfComposite": false },
+                { "name": "", "id": "20000000-0000-0000-0000-000000000023", "path": "<Gamepad>/rightTrigger",  "interactions": "", "processors": "", "groups": "", "action": "RightTrigger", "isComposite": false, "isPartOfComposite": false },
+
+                { "name": "", "id": "20000000-0000-0000-0000-000000000030", "path": "<Keyboard>/r",                  "interactions": "", "processors": "", "groups": "", "action": "LeftBumper",  "isComposite": false, "isPartOfComposite": false },
+                { "name": "", "id": "20000000-0000-0000-0000-000000000031", "path": "<Gamepad>/leftShoulder",        "interactions": "", "processors": "", "groups": "", "action": "LeftBumper",  "isComposite": false, "isPartOfComposite": false },
+                { "name": "", "id": "20000000-0000-0000-0000-000000000032", "path": "<Keyboard>/u",                  "interactions": "", "processors": "", "groups": "", "action": "RightBumper", "isComposite": false, "isPartOfComposite": false },
+                { "name": "", "id": "20000000-0000-0000-0000-000000000033", "path": "<Gamepad>/rightShoulder",       "interactions": "", "processors": "", "groups": "", "action": "RightBumper", "isComposite": false, "isPartOfComposite": false },
+
+                { "name": "", "id": "20000000-0000-0000-0000-000000000040", "path": "<Keyboard>/space",     "interactions": "", "processors": "", "groups": "", "action": "BtnBase",     "isComposite": false, "isPartOfComposite": false },
+                { "name": "", "id": "20000000-0000-0000-0000-000000000041", "path": "<Gamepad>/buttonSouth", "interactions": "", "processors": "", "groups": "", "action": "BtnBase",     "isComposite": false, "isPartOfComposite": false },
+                { "name": "", "id": "20000000-0000-0000-0000-000000000042", "path": "<Keyboard>/x",         "interactions": "", "processors": "", "groups": "", "action": "BtnRelease",  "isComposite": false, "isPartOfComposite": false },
+                { "name": "", "id": "20000000-0000-0000-0000-000000000043", "path": "<Gamepad>/buttonEast", "interactions": "", "processors": "", "groups": "", "action": "BtnRelease",  "isComposite": false, "isPartOfComposite": false },
+                { "name": "", "id": "20000000-0000-0000-0000-000000000044", "path": "<Keyboard>/c",         "interactions": "", "processors": "", "groups": "", "action": "BtnBreath",   "isComposite": false, "isPartOfComposite": false },
+                { "name": "", "id": "20000000-0000-0000-0000-000000000045", "path": "<Gamepad>/buttonNorth", "interactions": "", "processors": "", "groups": "", "action": "BtnBreath",   "isComposite": false, "isPartOfComposite": false },
+                { "name": "", "id": "20000000-0000-0000-0000-000000000046", "path": "<Keyboard>/v",         "interactions": "", "processors": "", "groups": "", "action": "BtnReserved", "isComposite": false, "isPartOfComposite": false },
+                { "name": "", "id": "20000000-0000-0000-0000-000000000047", "path": "<Gamepad>/buttonWest", "interactions": "", "processors": "", "groups": "", "action": "BtnReserved", "isComposite": false, "isPartOfComposite": false },
+                { "name": "", "id": "20000000-0000-0000-0000-000000000048", "path": "<Keyboard>/escape",    "interactions": "", "processors": "", "groups": "", "action": "BtnPause",    "isComposite": false, "isPartOfComposite": false },
+                { "name": "", "id": "20000000-0000-0000-0000-000000000049", "path": "<Gamepad>/start",      "interactions": "", "processors": "", "groups": "", "action": "BtnPause",    "isComposite": false, "isPartOfComposite": false }
+            ]
+        }
+    ],
+    "controlSchemes": []
+}
