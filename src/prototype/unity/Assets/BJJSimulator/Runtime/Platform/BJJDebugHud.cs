@@ -72,7 +72,8 @@ namespace BJJSimulator.Platform
             var p  = _mgr.Provider;
             var g  = _mgr.CurrentGameState;
 
-            sb.AppendLine($"phase {l.CurrentPhase}  role {l.SelectedRole}  scenario {l.ActiveScenario?.ToString() ?? \"·\"}");
+            var scenarioStr = l.ActiveScenario?.ToString() ?? "·";
+            sb.AppendLine($"phase {l.CurrentPhase}  role {l.SelectedRole}  scenario {scenarioStr}");
             sb.AppendLine($"round {FormatRound(_mgr.RoundRemainingMs)}  steps/upd {_mgr.LastStepsRun}");
 
             if (showLayerA && p.LastFrame.HasValue)
