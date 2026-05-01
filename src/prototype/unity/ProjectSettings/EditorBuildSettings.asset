@@ -4,5 +4,8 @@
 EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
-  m_Scenes: []
+  m_Scenes:
+  - enabled: 1
+    path: Assets/Scenes/BJJ.unity
+    guid: cbe36568059e94af2a0acf8e2170d357
   m_configObjects: {}

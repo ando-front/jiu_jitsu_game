@@ -1,4 +1,7 @@
 ﻿<Solution>
+  <Project Path="BJJSimulator.EditorApi.csproj" />
   <Project Path="BJJSimulator.Tests.csproj" />
   <Project Path="BJJSimulator.csproj" />
+  <Project Path="BJJSimulator.PlayModeTests.csproj" />
+  <Project Path="BJJSimulator.Editor.csproj" />
 </Solution>

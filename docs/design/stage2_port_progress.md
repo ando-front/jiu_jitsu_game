@@ -1,6 +1,6 @@
 # Stage 2 移植 進捗トラッカ
 
-**最終更新**: 2026-04-27 (item 3 + 5 完了)
+**最終更新**: 2026-04-30 (全 Stage 2 完了 — SetupScene 完全自動化)
 **エンジン**: Unity 6 (6000.0 LTS) — UE5 から変更 (2026-04-23)
 **前提**: [stage2_port_plan_v1.md](./stage2_port_plan_v1.md) §1 のファイル対応表
 
@@ -20,7 +20,7 @@
 - **New Input System (`BJJInputActions.inputactions`)**: 🟢 (Digit1-7 binding は未追加 — §残課題参照)
 - **Editor 自動化 (`BJJSceneSetup.cs`)**: 🟢 (`BJJ → Setup Scene` メニュー)
 - **Unity MCP 統合**: 🟢 (`com.coplaydev.unity-mcp` + `.mcp.json`)
-- **レンダ / 演出 (mesh / URP / UI Toolkit)**: 🟢 完了 (`BJJAvatarBinder` + `BJJVolumeController` + `BJJHud` UI Toolkit 完了)
+- **レンダ / 演出 (mesh / URP / UI Toolkit)**: 🟢 完了 (`BJJAvatarBinder` + `BJJVolumeController` + `BJJHud` UI Toolkit 完了 — SetupScene 自動配線済み)
 
 ---
 
@@ -96,9 +96,9 @@
 
 | Stage 1 相当 | Stage 2 出力 | 状態 |
 |---|---|---|
-| `scene/blockman.ts` | `Runtime/Platform/BJJAvatarBinder.cs` + `Assets/BJJSimulator/Art/` | 🟡 コード完了; Inspector rig 配線は Editor 作業 |
+| `scene/blockman.ts` | `Runtime/Platform/BJJAvatarBinder.cs` + `Assets/BJJSimulator/Art/` | 🟢 完了 (2026-04-30) — SetupScene 自動配線済み |
 | `scene/blockman.ts` (Mixamo Humanoid 代替パス) | `Runtime/Visual/BJJAnimatorBinder.cs` | 🟡 コード完了; Mixamo rig + Animator Controller は Editor 作業 |
-| stamina color grading | `Runtime/Platform/BJJVolumeController.cs` | 🟡 コード完了; Global Volume + Profile は Editor 作業 |
+| stamina color grading | `Runtime/Platform/BJJVolumeController.cs` | 🟢 完了 (2026-04-30) — SetupScene 自動配線済み |
 | `setWindowTint` / `pulseFlash` | `Runtime/Platform/BJJImpactFeedback.cs` | 🟢 完了 (2026-04-27) |
 | HUD / event log / tutorial / pause | UI Toolkit (`BJJHud.cs` + `BJJHud.uxml` + `BJJHud.uss`) | 🟢 完了 (2026-04-27) |
 

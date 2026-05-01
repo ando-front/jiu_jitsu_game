@@ -93,12 +93,23 @@ namespace BJJSimulator.Platform
         void Awake()
         {
             _mgr = GetComponent<BJJGameManager>();
+            // NOTE: bind volume components in Start() after profile is ready.
+        }
+
+        void Start()
+        {
+            BindVolumeComponents();
+        }
+
+        private void BindVolumeComponents()
+        {
 #if BJJ_URP
-            if (globalVolume?.profile != null)
-            {
-                globalVolume.profile.TryGet(out _ca);
-                globalVolume.profile.TryGet(out _chromatic);
-            }
+            if (globalVolume == null) return;
+            // Use sharedProfile to avoid MissingReferenceException from runtime clones.
+            var prof = globalVolume.sharedProfile;
+            if (prof == null) return;
+            prof.TryGet(out _ca);
+            prof.TryGet(out _chromatic);
 #endif
         }
 

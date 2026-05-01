@@ -65,12 +65,21 @@ namespace BJJSimulator.Platform
         void Awake()
         {
             _manager = GetComponent<BJJGameManager>();
+            // NOTE: profile may not be instanced yet in Awake; bind in Start instead.
+        }
+
+        void Start()
+        {
             BindVolumeComponents();
         }
 
         void LateUpdate()
         {
 #if BJJ_URP
+            // Lazy rebind: catches late-instanced profiles and domain-reload edge cases.
+            if ((_wb == null || _vig == null) && globalVolume != null)
+                BindVolumeComponents();
+
             if (_wb == null && _vig == null) return;
             var g = _manager.CurrentGameState;
             DriveStamina(g.Bottom.Stamina);
@@ -85,9 +94,12 @@ namespace BJJSimulator.Platform
         private void BindVolumeComponents()
         {
 #if BJJ_URP
-            if (globalVolume == null || globalVolume.profile == null) return;
-            globalVolume.profile.TryGet(out _wb);
-            globalVolume.profile.TryGet(out _vig);
+            if (globalVolume == null) return;
+            // Use sharedProfile to avoid MissingReferenceException from runtime clones.
+            var prof = globalVolume.sharedProfile;
+            if (prof == null) return;
+            prof.TryGet(out _wb);
+            prof.TryGet(out _vig);
 #endif
         }
 
