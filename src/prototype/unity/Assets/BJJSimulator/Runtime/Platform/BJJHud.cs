@@ -43,15 +43,24 @@ namespace BJJSimulator.Platform
         private const int EventLogLimit = 12;
         private readonly List<(long ms, SimEvent ev)> _eventLog = new(EventLogLimit + 1);
 
+        // UIDocument.rootVisualElement is built lazily — sometimes not ready until
+        // the first Update tick. Bind on demand and log a single warning on failure
+        // instead of spamming NRE every frame.
+        private bool _bindBroken;
+
         void Awake()
         {
             _mgr = GetComponent<BJJGameManager>();
             _doc = GetComponent<UIDocument>();
         }
 
-        void Start()
+        private bool TryBind()
         {
-            var root = _doc.rootVisualElement;
+            if (_lblPhase != null) return true;
+            if (_bindBroken)        return false;
+
+            var root = _doc != null ? _doc.rootVisualElement : null;
+            if (root == null) return false;
 
             _lblPhase      = root.Q<Label>("lbl-phase");
             _lblRound      = root.Q<Label>("lbl-round");
@@ -77,10 +86,23 @@ namespace BJJSimulator.Platform
             _lblHipPush      = root.Q<Label>("lbl-hip-push");
             _overlay    = root.Q("overlay");
             _lblOverlay = root.Q<Label>("lbl-overlay");
+
+            if (_lblPhase != null) return true;
+
+            // Root was populated but our named elements were missing — UXML
+            // is wrong. Mark broken so we stop retrying and log once.
+            _bindBroken = true;
+            Debug.LogWarning(
+                "[BJJHud] UI Toolkit bind failed — UXML lacks expected element " +
+                "names (lbl-phase missing). Check UIDocument.visualTreeAsset " +
+                "and BJJHud.uxml on the BJJ_GameManager GameObject.");
+            return false;
         }
 
         void Update()
         {
+            if (!TryBind()) return;
+
             foreach (var ev in _mgr.LastStepEvents)
             {
                 if (IsSuppressed(ev.Kind)) continue;
