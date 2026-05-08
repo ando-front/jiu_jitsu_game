@@ -64,17 +64,21 @@ namespace BJJSimulator.EditorTools
 
         // Substring tokens checked against the @<clip-name> portion of the
         // FBX filename. ORDER MATTERS — first hit wins, so put more
-        // specific tokens before more general ones.
+        // specific tokens before more general ones (e.g. "Pulling" before
+        // "Pull" so the more specific match doesn't get swallowed).
         private static readonly (string Token, StateBinding Binding)[] FILENAME_TO_STATE = new[]
         {
             ("Reach",     new StateBinding { StateName = "Reaching", HandStateValue = HandStateReaching, LoopTime = true,  Speed = 1f }),
             ("Punch",     new StateBinding { StateName = "Reaching", HandStateValue = HandStateReaching, LoopTime = false, Speed = 1f }),
+            ("Stab",      new StateBinding { StateName = "Reaching", HandStateValue = HandStateReaching, LoopTime = false, Speed = 1f }),
             ("Grappling", new StateBinding { StateName = "Contact",  HandStateValue = HandStateContact,  LoopTime = true,  Speed = 1f }),
             ("Contact",   new StateBinding { StateName = "Contact",  HandStateValue = HandStateContact,  LoopTime = true,  Speed = 1f }),
             ("Wrist",     new StateBinding { StateName = "Contact",  HandStateValue = HandStateContact,  LoopTime = true,  Speed = 1f }),
+            ("Removing",  new StateBinding { StateName = "Contact",  HandStateValue = HandStateContact,  LoopTime = true,  Speed = 1f }),
+            ("Pulling",   new StateBinding { StateName = "Gripped",  HandStateValue = HandStateGripped,  LoopTime = true,  Speed = 1f, ReplaceExistingMotion = true }),
+            ("Pull",      new StateBinding { StateName = "Gripped",  HandStateValue = HandStateGripped,  LoopTime = true,  Speed = 1f, ReplaceExistingMotion = true }),
             ("Grip",      new StateBinding { StateName = "Gripped",  HandStateValue = HandStateGripped,  LoopTime = true,  Speed = 1f, ReplaceExistingMotion = true }),
             ("Hold",      new StateBinding { StateName = "Gripped",  HandStateValue = HandStateGripped,  LoopTime = true,  Speed = 1f, ReplaceExistingMotion = true }),
-            ("Pulling",   new StateBinding { StateName = "Gripped",  HandStateValue = HandStateGripped,  LoopTime = true,  Speed = 1f, ReplaceExistingMotion = true }),
             ("Retract",   new StateBinding { StateName = "Retract",  HandStateValue = HandStateRetract,  LoopTime = false, Speed = 1f }),
             ("Recoil",    new StateBinding { StateName = "Retract",  HandStateValue = HandStateRetract,  LoopTime = false, Speed = 1f }),
             ("Withdraw",  new StateBinding { StateName = "Retract",  HandStateValue = HandStateRetract,  LoopTime = false, Speed = 1f }),
