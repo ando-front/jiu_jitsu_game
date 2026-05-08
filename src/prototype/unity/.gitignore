@@ -16,3 +16,9 @@ MemoryCaptures/
 
 # macOS
 .DS_Store
+
+# Editor session ephemera — local debug captures and crash recovery folders
+Assets/_DebugCaptures/
+Assets/_DebugCaptures.meta
+Assets/_Recovery/
+Assets/_Recovery.meta
