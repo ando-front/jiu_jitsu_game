@@ -45,6 +45,8 @@ Assets/
         BJJInputProvider.cs      # IStepProvider, polls New Input System
         BJJGameManager.cs        # Update hub
         BJJDebugHud.cs           # IMGUI text overlay
+      Visual/                    # GameState → Animator binders (Mixamo path)
+        BJJAnimatorBinder.cs     # drives 5 ints + 1 bool + 1 trigger per Animator
     Tests/
       BJJSimulatorTests.asmdef   # test assembly (Editor-only)
       EditMode/
@@ -131,6 +133,47 @@ Outside the role prompt and tutorial, press a digit key:
 Each press resets the round timer and forces the lifecycle into `Active`,
 even from `Paused` or `SessionEnded`. Order matches Stage 1's
 `SCENARIO_ORDER` so playtest scripts port directly.
+
+## Visual layer (Mixamo Animator path, optional)
+
+The primary visual path on this project is the **Transform-driven**
+`Runtime/Platform/BJJAvatarBinder.cs`, which directly poses primitive
+blockman joints from `BJJGameManager.CurrentGameState`. That path needs no
+external assets and runs out of the box once `BJJ → Setup Scene` is run.
+
+`Runtime/Visual/BJJAnimatorBinder.cs` is the **alternative** path for
+projects that want to drive a real Mixamo Humanoid (or any Animator
+Controller-driven rig) from the same `GameState`. It is a `MonoBehaviour`
+on `BJJ_GameManager` that pushes 5 `int`s + 1 `bool` per frame plus a
+`JustParried` trigger on parry edges into two Animator slots (Bottom and
+Top avatars). The Animator Controller asset and rigged characters are
+**not committed** — they are imported in the Editor following the Mixamo
+onboarding workflow below.
+
+### Animator parameter contract
+
+The Animator Controller asset (planned name `Assets/BJJSimulator/Art/Animations/BJJAvatar.controller`) must declare these parameters by name and type. Order is not significant in Animator Controllers; mismatched names produce a Unity console warning rather than a silent no-op.
+
+| Name | Type | Source |
+|---|---|---|
+| `IsBottom` | bool | role tag, set per Avatar |
+| `LHandState` | int | `(int)BJJSimulator.HandState` |
+| `RHandState` | int | `(int)BJJSimulator.HandState` |
+| `LFootState` | int | `(int)BJJSimulator.FootState` |
+| `RFootState` | int | `(int)BJJSimulator.FootState` |
+| `JustParried` | trigger | edge fire on any non-Parried → Parried hand transition |
+
+`BJJAnimatorBinder` subscribes to `BJJSessionLifecycle.OnRestartRequested` and `OnScenarioLoadRequested` so that scenario reloads never spuriously fire `JustParried` based on the previous session's cached hand states.
+
+### Mixamo onboarding workflow
+
+1. Download **Y Bot** (FBX for Unity, T-pose) + 4 base animations (`Idle`, `Sit Idle`, `Crouch Idle`, `Reaction`) from https://mixamo.com.
+2. Place under `Assets/BJJSimulator/Art/Characters/` and `.../Art/Animations/`. Use **Git LFS** for the FBX binaries.
+3. In Unity: set `YBot.fbx` rig type to **Humanoid** → Create From This Model. For each animation FBX, set rig type to **Humanoid → Copy From Other Avatar** pointing at the YBot avatar.
+4. Create `BJJAvatar.controller` with the parameter contract above and Idle / GuardIdle / TopPosture / Reaction states.
+5. From `BJJ → Setup Scene`, the `BJJ_GameManager` already exists. Manually instantiate two Y Bot prefabs as children (`Avatar_Bottom`, `Avatar_Top`), add a `BJJAnimatorBinder` component to `BJJ_GameManager`, and wire the two Animator slots in the Inspector.
+
+Either Animator slot may stay empty during early bring-up — the binder no-ops for the missing side.
 
 ## Known v1 Limitations
 
