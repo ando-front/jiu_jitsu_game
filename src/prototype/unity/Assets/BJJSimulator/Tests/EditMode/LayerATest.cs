@@ -24,10 +24,14 @@ namespace BJJSimulator.Tests
     public static class LayerATestHelpers
     {
         // A zeroed snapshot — fill in only the fields a given test cares about.
+        // KbLastEventMs is set to the sentinel so a test using nowMs=0L doesn't
+        // accidentally trip the assembler's "keyboard touched recently" branch
+        // via struct-default 0L. Mirrors BJJInputProvider's initialisation.
         public static RawHardwareSnapshot EmptyKb() => new RawHardwareSnapshot
         {
             GamepadConnected = false,
             DeviceKind       = DeviceKind.Keyboard,
+            KbLastEventMs    = BJJConst.SentinelTimeMs,
         };
 
         // Shorthand for a "live" gamepad snapshot with a stick value over the
@@ -47,6 +51,7 @@ namespace BJJSimulator.Tests
             GamepadRTrigger  = rTrigger,
             GamepadButtons   = buttons,
             DeviceKind       = kind,
+            KbLastEventMs    = BJJConst.SentinelTimeMs,
         };
     }
 
@@ -126,6 +131,9 @@ namespace BJJSimulator.Tests
                 // Keyboard fields are also set — assembler must ignore them.
                 LsLeft           = true,
                 KbButtons        = ButtonBit.BtnBase,
+                // Match BJJInputProvider's initialisation: struct-default 0L
+                // would falsely mark the keyboard as "recent" against nowMs=0L.
+                KbLastEventMs    = BJJConst.SentinelTimeMs,
             };
             var (frame, _) = LayerAOps.Assemble(LayerAState.Initial, hw, 0L);
 

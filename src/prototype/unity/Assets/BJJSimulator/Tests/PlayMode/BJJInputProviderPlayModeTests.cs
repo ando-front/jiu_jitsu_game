@@ -91,20 +91,21 @@ namespace BJJSimulator.PlayModeTests
 
             // First press — _digitPrev=0, digitNow=0b10 → edge=0b10
             Press(_keyboard.digit1Key);
+            yield return null;                        // let InputSystem flush the press event
             _provider.PollHardware(t);
             Assert.AreNotEqual(0, _provider.DigitEdges & (1 << 1),
                 "first down-stroke: bit 1 must be set");
 
             // Release — digitNow=0, edges contain no up→down transitions
             Release(_keyboard.digit1Key);
+            yield return null;                        // let InputSystem flush the release
             _provider.PollHardware(t += 16);
             Assert.AreEqual(0, _provider.DigitEdges & (1 << 1),
                 "after release: bit 1 must be 0 (no up→down edge)");
 
-            yield return null; // one game frame passes
-
             // Second press — _digitPrev now 0 again → fresh edge
             Press(_keyboard.digit1Key);
+            yield return null;                        // let InputSystem flush the second press
             _provider.PollHardware(t += 16);
             Assert.AreNotEqual(0, _provider.DigitEdges & (1 << 1),
                 "second down-stroke: bit 1 must fire again");
