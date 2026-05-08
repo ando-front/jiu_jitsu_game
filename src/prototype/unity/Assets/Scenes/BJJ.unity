@@ -272,7 +272,10 @@ PrefabInstance:
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: e1b35b98860d14fbb8a62e5c7dd24355, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1635373566}
   m_SourcePrefab: {fileID: 100100000, guid: e1b35b98860d14fbb8a62e5c7dd24355, type: 3}
 --- !u!95 &191966775 stripped
 Animator:
@@ -517,6 +520,11 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 627012619}
   m_Mesh: {fileID: 10207, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!1 &745395063 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 919132149155446097, guid: e1b35b98860d14fbb8a62e5c7dd24355, type: 3}
+  m_PrefabInstance: {fileID: 1744866147}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &785769488
 GameObject:
   m_ObjectHideFlags: 0
@@ -991,6 +999,10 @@ MonoBehaviour:
   flashDecaySpeed: 0.18
   caAtWindowOpen: 0.45
   caLerpSpeed: 0.1
+  caPulseGripped: 0.3
+  caPulseParried: 0.55
+  caPulseGripBroken: 0.4
+  caPulseDurationMs: 150
   shakeDecayRate: 10
 --- !u!114 &1092195920
 MonoBehaviour:
@@ -1223,6 +1235,25 @@ Transform:
   - {fileID: 1237144871}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1635373565 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 919132149155446097, guid: e1b35b98860d14fbb8a62e5c7dd24355, type: 3}
+  m_PrefabInstance: {fileID: 191966774}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &1635373566
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1635373565}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 246ff90f4608543ef93d5edd3a7c846d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: BJJSimulator::BJJSimulator.Visual.BJJAvatarTint
+  tintColor: {r: 0.3, g: 0.5, b: 0.92, a: 1}
+  tintStrength: 0.6
 --- !u!1 &1692809789
 GameObject:
   m_ObjectHideFlags: 0
@@ -1383,7 +1414,10 @@ PrefabInstance:
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: e1b35b98860d14fbb8a62e5c7dd24355, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1744866150}
   m_SourcePrefab: {fileID: 100100000, guid: e1b35b98860d14fbb8a62e5c7dd24355, type: 3}
 --- !u!95 &1744866148 stripped
 Animator:
@@ -1395,6 +1429,20 @@ Transform:
   m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: e1b35b98860d14fbb8a62e5c7dd24355, type: 3}
   m_PrefabInstance: {fileID: 1744866147}
   m_PrefabAsset: {fileID: 0}
+--- !u!114 &1744866150
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 745395063}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 246ff90f4608543ef93d5edd3a7c846d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: BJJSimulator::BJJSimulator.Visual.BJJAvatarTint
+  tintColor: {r: 0.92, g: 0.3, b: 0.3, a: 1}
+  tintStrength: 0.6
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
