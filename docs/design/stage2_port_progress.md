@@ -97,6 +97,7 @@
 | Stage 1 相当 | Stage 2 出力 | 状態 |
 |---|---|---|
 | `scene/blockman.ts` | `Runtime/Platform/BJJAvatarBinder.cs` + `Assets/BJJSimulator/Art/` | 🟡 コード完了; Inspector rig 配線は Editor 作業 |
+| `scene/blockman.ts` (Mixamo Humanoid 代替パス) | `Runtime/Visual/BJJAnimatorBinder.cs` | 🟡 コード完了; Mixamo rig + Animator Controller は Editor 作業 |
 | stamina color grading | `Runtime/Platform/BJJVolumeController.cs` | 🟡 コード完了; Global Volume + Profile は Editor 作業 |
 | `setWindowTint` / `pulseFlash` | `Runtime/Platform/BJJImpactFeedback.cs` | 🟢 完了 (2026-04-27) |
 | HUD / event log / tutorial / pause | UI Toolkit (`BJJHud.cs` + `BJJHud.uxml` + `BJJHud.uss`) | 🟢 完了 (2026-04-27) |
@@ -135,8 +136,8 @@
 
 ## 次の作業単位 (小さい順)
 
-Pure / テスト / Platform / Editor 自動化 / MCP / Scenario picker wiring は完了。
-残るのは Visual Pillar 領域。
+Pure / テスト / Platform / Editor 自動化 / MCP / Scenario picker wiring と
+`BJJAvatarBinder` C# scaffold は完了。残るのは Visual Pillar の Editor 工程。
 
 1. ~~**Skinned mesh + Animator**~~ 🟢 **完了 (2026-04-26)** — `Runtime/Platform/BJJAvatarBinder.cs`
    + `Assets/BJJSimulator/Art/` ディレクトリを追加。`BJJGameManager.CurrentGameState` を
@@ -157,8 +158,14 @@ Pure / テスト / Platform / Editor 自動化 / MCP / Scenario picker wiring �
    (4 ケース) + `BJJSimulator.PlayModeTests.asmdef` を追加。PR #19 マージ済み。
 5. ~~**PostProcess + Camera Shake**~~ 🟢 **完了 (2026-04-27)** — `Runtime/Platform/BJJImpactFeedback.cs`
    を追加。`pulseFlash` → `ColorAdjustments.colorFilter` 減衰、`setWindowTint` →
-   `ChromaticAberration.intensity`（判断窓状態に追従）、`pulseShake` → カメラ
+   `ChromaticAberration.intensity`(判断窓状態に追従)、`pulseShake` → カメラ
    `localPosition` 加算オフセット。全効果 `#if BJJ_URP` ガード付き。
+6. **Mixamo Humanoid 代替パス**(Optional)— `Runtime/Visual/BJJAnimatorBinder.cs`
+   が `GameState` を Animator parameter に流す。実 Avatar (Mixamo Y Bot 等) と
+   `BJJAvatar.controller` を Editor で import し、`BJJ_GameManager` に
+   `BJJAnimatorBinder` を attach + Animator slot を Inspector で wire することで
+   primitive Blockman の代わりに Humanoid rig 駆動が可能。README "Visual layer
+   (Mixamo Animator path, optional)" 参照。
 
 ---
 
