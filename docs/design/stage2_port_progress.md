@@ -1,6 +1,6 @@
 # Stage 2 移植 進捗トラッカ
 
-**最終更新**: 2026-05-08 (Mixamo Y Bot 統合 — Humanoid avatar / Animator Controller / scene 配線完了)
+**最終更新**: 2026-05-08 (Mixamo Y Bot 統合 + grip-feel pass 1 + Avatar 色差別化)
 **エンジン**: Unity 6 (6000.0 LTS) — UE5 から変更 (2026-04-23)
 **前提**: [stage2_port_plan_v1.md](./stage2_port_plan_v1.md) §1 のファイル対応表
 
@@ -28,6 +28,15 @@
   - `Assets/BJJSimulator/Art/Animations/BJJAvatar.controller`: 6 parameters / 4 states / 8 transitions
   - `BJJ_GameManager` 子に `Avatar_Bottom (0,0,1)` / `Avatar_Top (0,0,-1, rot 0,180,0)` 配置 + `BJJAnimatorBinder` 配線
   - Play 検証: `Avatar_Top` が `!IsBottom` で `TopPosture` へ即遷移 / `JustParried` で `Reaction` 経由 `Idle` 復帰 / Console error+warning 0 件確認
+- **Grip-feel pass 1** (PR #28 / `0e3a93d`): 🟢 完了
+  - `BJJImpactFeedback`: `HandGripped` / `HandParried` / `HandGripBroken` イベントに ChromaticAberration pulse (peaks 0.30 / 0.55 / 0.40、150ms 線形減衰) を追加。既存 window 駆動 CA に `Mathf.Max` で重ね、grip 連打時は強い pulse のみが上書きされる
+  - shake 振幅を Stage 1 web tuning から増量(Gripped 0.04→0.08、Parried 0.06→0.10、GripBroken 0.05→0.07)
+  - `BJJAvatar.controller`: `Gripped` state 追加(Y Bot@Idle / speed 0.5、AnyState 2-parallel `LHandState/RHandState Equals 3` 入口 + 1 AND 出口 `LHandState/RHandState NotEqual 3`、`canTransitionToSelf=false`)
+  - 4 件の Inspector 調整 knob(`caPulseGripped/Parried/GripBroken/DurationMs`)で recompile 不要のチューニング可能
+- **Avatar 色差別化** (PR #29 / `d730194`): 🟢 完了
+  - `Runtime/Visual/BJJAvatarTint.cs` 新規 — `MaterialPropertyBlock` で `_Color` (Standard) / `_BaseColor` (URP/Lit) 両方上書き、`[ExecuteAlways]` で Edit モードでも反映
+  - `Avatar_Bottom` 暖色赤 (0.92, 0.30, 0.30) / `Avatar_Top` 寒色青 (0.30, 0.50, 0.92)、tintStrength 0.6
+  - 共有マテリアル不変 / 新規 `.mat` アセット無し。M1 playtest でロール識別性が出る
 
 ---
 
@@ -104,9 +113,10 @@
 | Stage 1 相当 | Stage 2 出力 | 状態 |
 |---|---|---|
 | `scene/blockman.ts` | `Runtime/Platform/BJJAvatarBinder.cs` + `Assets/BJJSimulator/Art/` | 🟢 完了 (2026-04-30) — SetupScene 自動配線済み |
-| `scene/blockman.ts` (Mixamo Humanoid 代替パス) | `Runtime/Visual/BJJAnimatorBinder.cs` + `Art/Characters/Y Bot.fbx` + `Art/Animations/*.fbx` + `Art/Animations/BJJAvatar.controller` | 🟢 完了 (2026-05-08, PR #27) — Humanoid retarget / Animator Controller / 2 Avatar 配置 / binder 配線 / HUD-less Play 検証済み |
+| `scene/blockman.ts` (Mixamo Humanoid 代替パス) | `Runtime/Visual/BJJAnimatorBinder.cs` + `Art/Characters/Y Bot.fbx` + `Art/Animations/*.fbx` + `Art/Animations/BJJAvatar.controller` | 🟢 完了 (2026-05-08, PR #27 + Gripped state 追加 PR #28) — Humanoid retarget / Animator Controller (5 states 含む `Gripped`) / 2 Avatar 配置 / binder 配線 / HUD-less Play 検証済み |
 | stamina color grading | `Runtime/Platform/BJJVolumeController.cs` | 🟢 完了 (2026-04-30) — SetupScene 自動配線済み |
-| `setWindowTint` / `pulseFlash` | `Runtime/Platform/BJJImpactFeedback.cs` | 🟢 完了 (2026-04-27) |
+| `setWindowTint` / `pulseFlash` / grip CA pulse | `Runtime/Platform/BJJImpactFeedback.cs` | 🟢 完了 (2026-04-27 + 2026-05-08 grip pulse PR #28) |
+| Avatar role 色差別化 (Visual Pillar) | `Runtime/Visual/BJJAvatarTint.cs` | 🟢 完了 (2026-05-08, PR #29) — `MaterialPropertyBlock` per-instance、Bottom 赤 / Top 青、Edit/Play 両モード反映 |
 | HUD / event log / tutorial / pause | UI Toolkit (`BJJHud.cs` + `BJJHud.uxml` + `BJJHud.uss`) | 🟢 完了 (2026-04-27, lazy bind 修正 `cc79ccd` 2026-05-08) |
 
 ## テスト
@@ -169,12 +179,24 @@ Pure / テスト / Platform / Editor 自動化 / MCP / Mixamo Humanoid 経路ま
    `BJJ_GameManager` 子への `Avatar_Bottom` / `Avatar_Top` 配置、`BJJAnimatorBinder`
    スロット配線まで完了。Play 検証で `IsBottom` flag、`!IsBottom → TopPosture`
    遷移、`JustParried → Reaction → Idle` パスを確認。Console error/warning 0 件。
-7. **Avatar の Top/Bottom 視覚差別化**(Visual Pillar)— 現状は同一 Y Bot を 2 体置いただけ。
-   マテリアル色変更 / Mixamo 別キャラへの差し替え / Animator Override Controller などで識別性を上げる。
-8. **既存テスト fail 3 件の解消**(別 PR で対応推奨、本 PR 由来ではない既存 issue):
+7. ~~**Avatar の Top/Bottom 視覚差別化**~~ 🟢 **完了 (2026-05-08, PR #29 / `d730194`)** —
+   `Runtime/Visual/BJJAvatarTint.cs` を追加し、`MaterialPropertyBlock` 経由で
+   per-instance に `_Color` / `_BaseColor` を上書き。`Avatar_Bottom` を暖色赤、
+   `Avatar_Top` を寒色青で識別。共有マテリアル不変 / `.mat` 増殖無し。
+8. **Gripped state の姿勢ジャンプ解消**(Visual Pillar follow-up、grip-pose anim 入手後が本番)—
+   PR #28 で `Gripped` state は Y Bot@Idle (立ちポーズ) 流用のため、`GuardIdle` (座) /
+   `TopPosture` (屈) 状態から遷移時にスタンスがジャンプする既知の限界がある。本対応は
+   (a) `BottomGripped` / `TopGripped` の 2 ロール特化サブステート追加(8 AnyState 遷移)、
+   または (b) Override Layer + 上半身 AvatarMask で grip-pose を上半身のみオーバーレイ、
+   のいずれか。後者は専用 grip-pose アニメ入手後にようやく視覚的価値が出る。
+9. **既存テスト fail 3 件の解消**(別 PR で対応推奨、本 PR 由来ではない既存 issue):
    - `InputTransformTest.StickPreservesDirection` — `Vec2(0.5, 0.5)` 入力で X/Y 対称性 1e-9 内を要求するが実差 ~3e-8。`ApplyStickDeadzoneAndCurve` の計算順序対称性破綻。
    - `LayerAAssemblerTests.LiveGamepadWinsOverKeyboardForDeviceKind` — gamepad アクティブ + keyboard 同時押下で gamepad 側を選ばずキーボードが勝つ。`KbRecentMs` 仲裁順序の調整要。
    - `BJJInputProviderPlayModeTests.DigitEdgeFiresOncePerPress` — InputSystem シミュレート key の edge が立たない。PlayMode の入力イベント timing flake。
+10. **M1 playtest 体感確認とフィードバック反映** — PR #28 の 4 件 Inspector knob
+    (`caPulseGripped/Parried/GripBroken/DurationMs`) と PR #29 の `tintColor` × `tintStrength`
+    を実 playtest で振り直し、テスター反応を本ドキュメントに追記する。Gripped state の
+    姿勢ジャンプが実際にどれだけ気になるかも playtest で判定。
 
 ---
 
