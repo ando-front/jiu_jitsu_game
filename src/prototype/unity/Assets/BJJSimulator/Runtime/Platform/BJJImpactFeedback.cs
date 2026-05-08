@@ -58,6 +58,16 @@ namespace BJJSimulator.Platform
         [Tooltip("Lerp speed toward target aberration per LateUpdate.")]
         [SerializeField, Range(0.01f, 1f)] private float caLerpSpeed    = 0.10f;
 
+        [Header("Grip CA pulse (transient aberration on hand events)")]
+        [Tooltip("Peak CA intensity when a grip is established (HandGripped).")]
+        [SerializeField, Range(0f, 1f)] private float caPulseGripped    = 0.30f;
+        [Tooltip("Peak CA intensity when a hand is parried (HandParried).")]
+        [SerializeField, Range(0f, 1f)] private float caPulseParried    = 0.55f;
+        [Tooltip("Peak CA intensity when a grip is broken (HandGripBroken).")]
+        [SerializeField, Range(0f, 1f)] private float caPulseGripBroken = 0.40f;
+        [Tooltip("Pulse duration in milliseconds (linear decay).")]
+        [SerializeField, Range(40f, 400f)] private float caPulseDurationMs = 150f;
+
         [Header("Camera shake")]
         [Tooltip("Fraction of shake amplitude removed each second (higher = sharper).")]
         [SerializeField, Range(1f, 30f)] private float shakeDecayRate = 10f;
@@ -85,6 +95,13 @@ namespace BJJSimulator.Platform
         }
         private readonly List<ActiveShake> _shakes = new(8);
         private Vector3 _appliedShakeOffset;
+
+        // CA pulse state (additive over the window-driven baseline).
+        // Linear decay so the pulse "snaps" rather than lingering — the
+        // grip-feel reads as a moment of impact, not a held tint.
+        private float _caPulseRemaining;
+        private float _caPulseTotal;
+        private float _caPulseAmp;
 
         // ------------------------------------------------------------------
         // Lifecycle
@@ -159,13 +176,16 @@ namespace BJJSimulator.Platform
                     TriggerFlash(new Color(1.00f, 0.69f, 0.50f), 260f);
                     break;
                 case SimEventKind.HandGripped:
-                    TriggerShake(0.04f, 120f);
+                    TriggerShake(0.08f, 140f);
+                    TriggerCaPulse(caPulseGripped);
                     break;
                 case SimEventKind.HandParried:
-                    TriggerShake(0.06f, 160f);
+                    TriggerShake(0.10f, 180f);
+                    TriggerCaPulse(caPulseParried);
                     break;
                 case SimEventKind.HandGripBroken:
-                    TriggerShake(0.05f, 140f);
+                    TriggerShake(0.07f, 150f);
+                    TriggerCaPulse(caPulseGripBroken);
                     break;
             }
         }
@@ -217,10 +237,23 @@ namespace BJJSimulator.Platform
             bool anyOpening  = g.JudgmentWindow.State  == JudgmentWindowState.Opening ||
                                g.CounterWindow.State   == CounterWindowState.Opening;
 
-            float target =
+            float windowTarget =
                 (judgeOpen || counterOpen) ? caAtWindowOpen :
                 anyOpening                 ? caAtWindowOpen * 0.5f :
                                              0f;
+
+            // Grip pulse: linear decay, taken as max with the window baseline so a
+            // mid-window grip event still reads as a sharper bump rather than being
+            // hidden by the already-elevated CA.
+            float pulseValue = 0f;
+            if (_caPulseRemaining > 0f)
+            {
+                _caPulseRemaining -= Time.unscaledDeltaTime * 1000f;
+                float t = Mathf.Clamp01(_caPulseRemaining / Mathf.Max(1f, _caPulseTotal));
+                pulseValue = _caPulseAmp * t;
+            }
+
+            float target = Mathf.Max(windowTarget, pulseValue);
 
             _chromatic.intensity.Override(
                 Mathf.Lerp(_chromatic.intensity.value, target, caLerpSpeed));
@@ -239,6 +272,21 @@ namespace BJJSimulator.Platform
                 TotalMs     = durationMs,
                 Amplitude   = amplitude,
             });
+        }
+
+        // Re-trigger replaces the active pulse only when the new amplitude is
+        // larger — back-to-back grip exchanges still get the strongest hit
+        // visualised, but a tiny pulse can't clip a louder one already decaying.
+        private void TriggerCaPulse(float amplitude)
+        {
+            if (amplitude <= 0f) return;
+            float currentValue = _caPulseRemaining > 0f
+                ? _caPulseAmp * (_caPulseRemaining / Mathf.Max(1f, _caPulseTotal))
+                : 0f;
+            if (amplitude <= currentValue) return;
+            _caPulseAmp       = amplitude;
+            _caPulseRemaining = caPulseDurationMs;
+            _caPulseTotal     = caPulseDurationMs;
         }
 
         private void TickShake()
