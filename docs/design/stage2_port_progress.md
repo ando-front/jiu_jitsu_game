@@ -1,6 +1,6 @@
 # Stage 2 移植 進捗トラッカ
 
-**最終更新**: 2026-04-30 (全 Stage 2 完了 — SetupScene 完全自動化)
+**最終更新**: 2026-05-08 (Mixamo Y Bot 統合 — Humanoid avatar / Animator Controller / scene 配線完了)
 **エンジン**: Unity 6 (6000.0 LTS) — UE5 から変更 (2026-04-23)
 **前提**: [stage2_port_plan_v1.md](./stage2_port_plan_v1.md) §1 のファイル対応表
 
@@ -11,16 +11,23 @@
 
 ---
 
-## サマリ (2026-04-25)
+## サマリ (2026-05-08)
 
 - **Pure コアロジック (Core / State / Input / Sim / AI)**: 全 🟢
-- **EditMode 単体テスト**: 全 🟢 (Stage 1 の `tests/unit/*` 1 対 1)
+- **EditMode 単体テスト**: 266 / 268 pass(2 件 fail は Input layer の既存 issue — §既知 fail 参照)
 - **EditMode シナリオ結合テスト**: 全 🟢 (Stage 1 の `tests/scenario/*` 6 ファイル 1 対 1)
+- **PlayMode テスト**: 6 / 7 pass(1 件 fail は `BJJInputProvider` digit edge の PlayMode flake — §既知 fail 参照)
 - **Platform 層 (MonoBehaviour)**: 全 🟢 (`BJJGameManager` / `BJJInputProvider` / `BJJSessionLifecycle` / `BJJDebugHud`)
 - **New Input System (`BJJInputActions.inputactions`)**: 🟢 (Digit1-7 binding は未追加 — §残課題参照)
 - **Editor 自動化 (`BJJSceneSetup.cs`)**: 🟢 (`BJJ → Setup Scene` メニュー)
 - **Unity MCP 統合**: 🟢 (`com.coplaydev.unity-mcp` + `.mcp.json`)
-- **レンダ / 演出 (mesh / URP / UI Toolkit)**: 🟢 完了 (`BJJAvatarBinder` + `BJJVolumeController` + `BJJHud` UI Toolkit 完了 — SetupScene 自動配線済み)
+- **レンダ / 演出 (mesh / URP / UI Toolkit)**: 🟢 完了 (`BJJAvatarBinder` + `BJJVolumeController` + `BJJHud` UI Toolkit + `BJJImpactFeedback` — SetupScene 自動配線済み)
+- **Mixamo Humanoid 経路** (PR #27 / `72bed94`): 🟢 完了
+  - `Y Bot.fbx` → Humanoid (`CreateFromThisModel`) + `Y BotAvatar` 生成
+  - 4 アニメ (`Idle` / `Sitting Idle` / `Crouch Idle` / `Reaction`) → `CopyFromOther` で retarget
+  - `Assets/BJJSimulator/Art/Animations/BJJAvatar.controller`: 6 parameters / 4 states / 8 transitions
+  - `BJJ_GameManager` 子に `Avatar_Bottom (0,0,1)` / `Avatar_Top (0,0,-1, rot 0,180,0)` 配置 + `BJJAnimatorBinder` 配線
+  - Play 検証: `Avatar_Top` が `!IsBottom` で `TopPosture` へ即遷移 / `JustParried` で `Reaction` 経由 `Idle` 復帰 / Console error+warning 0 件確認
 
 ---
 
@@ -97,10 +104,10 @@
 | Stage 1 相当 | Stage 2 出力 | 状態 |
 |---|---|---|
 | `scene/blockman.ts` | `Runtime/Platform/BJJAvatarBinder.cs` + `Assets/BJJSimulator/Art/` | 🟢 完了 (2026-04-30) — SetupScene 自動配線済み |
-| `scene/blockman.ts` (Mixamo Humanoid 代替パス) | `Runtime/Visual/BJJAnimatorBinder.cs` | 🟡 コード完了; Mixamo rig + Animator Controller は Editor 作業 |
+| `scene/blockman.ts` (Mixamo Humanoid 代替パス) | `Runtime/Visual/BJJAnimatorBinder.cs` + `Art/Characters/Y Bot.fbx` + `Art/Animations/*.fbx` + `Art/Animations/BJJAvatar.controller` | 🟢 完了 (2026-05-08, PR #27) — Humanoid retarget / Animator Controller / 2 Avatar 配置 / binder 配線 / HUD-less Play 検証済み |
 | stamina color grading | `Runtime/Platform/BJJVolumeController.cs` | 🟢 完了 (2026-04-30) — SetupScene 自動配線済み |
 | `setWindowTint` / `pulseFlash` | `Runtime/Platform/BJJImpactFeedback.cs` | 🟢 完了 (2026-04-27) |
-| HUD / event log / tutorial / pause | UI Toolkit (`BJJHud.cs` + `BJJHud.uxml` + `BJJHud.uss`) | 🟢 完了 (2026-04-27) |
+| HUD / event log / tutorial / pause | UI Toolkit (`BJJHud.cs` + `BJJHud.uxml` + `BJJHud.uss`) | 🟢 完了 (2026-04-27, lazy bind 修正 `cc79ccd` 2026-05-08) |
 
 ## テスト
 
@@ -136,8 +143,8 @@
 
 ## 次の作業単位 (小さい順)
 
-Pure / テスト / Platform / Editor 自動化 / MCP / Scenario picker wiring と
-`BJJAvatarBinder` C# scaffold は完了。残るのは Visual Pillar の Editor 工程。
+Pure / テスト / Platform / Editor 自動化 / MCP / Mixamo Humanoid 経路まで完了。
+残るのは Visual Pillar の上位仕上げと既知 fail の解消。
 
 1. ~~**Skinned mesh + Animator**~~ 🟢 **完了 (2026-04-26)** — `Runtime/Platform/BJJAvatarBinder.cs`
    + `Assets/BJJSimulator/Art/` ディレクトリを追加。`BJJGameManager.CurrentGameState` を
@@ -149,25 +156,25 @@ Pure / テスト / Platform / Editor 自動化 / MCP / Scenario picker wiring �
    `com.unity.render-pipelines.universal 17.0.3` を追加。`BJJSimulator.asmdef` に
    URP 参照 + versionDefine `BJJ_URP`。Global Volume + Profile の Editor セットアップは
    Inspector 作業として残る。
-3. ~~**UI Toolkit へのコーチ HUD 移植**~~ 🟢 **完了 (2026-04-27)** — `Runtime/Platform/BJJHud.cs`
-   + `Runtime/UI/BJJHud.uxml` + `Runtime/UI/BJJHud.uss` を追加。4 パネル構成
-   (top-left: phase/input/sim, top-right: controls hint, bottom-left: coach,
-   bottom-right: event log) + ライフサイクル中央オーバーレイ。`UIDocument` に
-   `.uxml` を Inspector でアサインして既存 `BJJDebugHud` と差し替え可能。
+3. ~~**UI Toolkit へのコーチ HUD 移植**~~ 🟢 **完了 (2026-04-27 / 2026-05-08 lazy bind 修正 `cc79ccd`)** — `Runtime/Platform/BJJHud.cs`
+   + `Runtime/UI/BJJHud.uxml` + `Runtime/UI/BJJHud.uss`。4 パネル構成 + ライフサイクル中央オーバーレイ。
 4. ~~**PlayMode テスト**~~ 🟢 **完了 (2026-04-26 / 2026-05-08 拡張)** —
    `Tests/PlayMode/BJJInputProviderPlayModeTests.cs` (4 ケース、PR #19) +
    `Tests/PlayMode/BJJAnimatorBinderPlayModeTests.cs` (3 ケース、binder の
    prev-state cache / lifecycle subscribe / OnDestroy unsubscribe を検証)。
 5. ~~**PostProcess + Camera Shake**~~ 🟢 **完了 (2026-04-27)** — `Runtime/Platform/BJJImpactFeedback.cs`
-   を追加。`pulseFlash` → `ColorAdjustments.colorFilter` 減衰、`setWindowTint` →
-   `ChromaticAberration.intensity`(判断窓状態に追従)、`pulseShake` → カメラ
-   `localPosition` 加算オフセット。全効果 `#if BJJ_URP` ガード付き。
-6. **Mixamo Humanoid 代替パス**(Optional)— `Runtime/Visual/BJJAnimatorBinder.cs`
-   が `GameState` を Animator parameter に流す。実 Avatar (Mixamo Y Bot 等) と
-   `BJJAvatar.controller` を Editor で import し、`BJJ_GameManager` に
-   `BJJAnimatorBinder` を attach + Animator slot を Inspector で wire することで
-   primitive Blockman の代わりに Humanoid rig 駆動が可能。README "Visual layer
-   (Mixamo Animator path, optional)" 参照。
+   を追加。
+6. ~~**Mixamo Humanoid 代替パス**~~ 🟢 **完了 (2026-05-08, PR #27 / `72bed94`)** —
+   Y Bot.fbx の Humanoid retarget、`BJJAvatar.controller`(6 params / 4 states)、
+   `BJJ_GameManager` 子への `Avatar_Bottom` / `Avatar_Top` 配置、`BJJAnimatorBinder`
+   スロット配線まで完了。Play 検証で `IsBottom` flag、`!IsBottom → TopPosture`
+   遷移、`JustParried → Reaction → Idle` パスを確認。Console error/warning 0 件。
+7. **Avatar の Top/Bottom 視覚差別化**(Visual Pillar)— 現状は同一 Y Bot を 2 体置いただけ。
+   マテリアル色変更 / Mixamo 別キャラへの差し替え / Animator Override Controller などで識別性を上げる。
+8. **既存テスト fail 3 件の解消**(別 PR で対応推奨、本 PR 由来ではない既存 issue):
+   - `InputTransformTest.StickPreservesDirection` — `Vec2(0.5, 0.5)` 入力で X/Y 対称性 1e-9 内を要求するが実差 ~3e-8。`ApplyStickDeadzoneAndCurve` の計算順序対称性破綻。
+   - `LayerAAssemblerTests.LiveGamepadWinsOverKeyboardForDeviceKind` — gamepad アクティブ + keyboard 同時押下で gamepad 側を選ばずキーボードが勝つ。`KbRecentMs` 仲裁順序の調整要。
+   - `BJJInputProviderPlayModeTests.DigitEdgeFiresOncePerPress` — InputSystem シミュレート key の edge が立たない。PlayMode の入力イベント timing flake。
 
 ---
 
@@ -177,3 +184,6 @@ Pure / テスト / Platform / Editor 自動化 / MCP / Scenario picker wiring �
 - テストアセンブリは現状 Editor 専用。PlayMode テストを増やす場合は別 asmdef に分割推奨
 - `Packages/manifest.json` の `com.coplaydev.unity-mcp` git 参照はバージョン固定無し
   (`#main`)。再現性が問題になったら `#vX.Y.Z` 等タグ参照に切り替える
+- Editor で Play mode 中に MCP plugin の WebSocket session が稀に切断する事象あり
+  (PR #27 authoring 中に 1 回観測、`Assets/_Recovery/` 生成)。再現条件は不明、再起動で復旧。
+  再発時は `Editor.log` + `_Recovery/` 中身を保全して follow-up issue 化。
