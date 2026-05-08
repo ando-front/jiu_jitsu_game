@@ -134,6 +134,11 @@ Each press resets the round timer and forces the lifecycle into `Active`,
 even from `Paused` or `SessionEnded`. Order matches Stage 1's
 `SCENARIO_ORDER` so playtest scripts port directly.
 
+While in Play mode you can also use **BJJ → Run Scenario → ...** from the
+Editor menu bar to load any scenario without keyboard focus on the Game
+view (handy when stepping through Animator transitions or Inspector
+edits). The menu items are greyed out outside Play mode.
+
 ## Visual layer (Mixamo Animator path, optional)
 
 The primary visual path on this project is the **Transform-driven**
