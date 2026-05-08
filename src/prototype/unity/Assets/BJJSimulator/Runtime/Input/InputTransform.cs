@@ -19,19 +19,33 @@ namespace BJJSimulator
         /// <summary>
         /// Apply inner/outer deadzone and power-curve to a raw stick value.
         /// </summary>
+        // Implementation note: arithmetic runs in double, the per-axis scale
+        // factor is computed once, and only the final products are cast to
+        // float. The earlier float-only path produced a 2-ULP X/Y asymmetry
+        // for diagonal inputs (e.g. (0.5, 0.5) → r.X = 0x3ED161F1,
+        // r.Y = 0x3ED161EF) on Mono ARM64 — almost certainly a JIT FMA /
+        // vectorisation reorder. Computing `scale = curved / mag` once and
+        // multiplying both axes by the same double makes symmetry obvious to
+        // any reordering pass and matches the Stage 1 TS reference (Number
+        // is double-precision in JS).
         public static Vec2 ApplyStickDeadzoneAndCurve(Vec2 raw)
         {
-            float mag = raw.Magnitude;
-            if (mag < StickInnerDeadzone)
+            double rx = raw.X;
+            double ry = raw.Y;
+            double magSq = rx * rx + ry * ry;
+            double inner = StickInnerDeadzone;
+            if (magSq < inner * inner)
                 return Vec2.Zero;
 
-            float rescaled = System.Math.Min(
-                1f,
-                (mag - StickInnerDeadzone) / (StickOuterDeadzone - StickInnerDeadzone));
-            float curved = (float)System.Math.Pow(rescaled, StickCurveExponent);
-            float nx = raw.X / mag;
-            float ny = raw.Y / mag;
-            return new Vec2(nx * curved, ny * curved);
+            double mag = System.Math.Sqrt(magSq);
+            double rescaled = System.Math.Min(
+                1d,
+                (mag - inner) / (StickOuterDeadzone - inner));
+            double curved = System.Math.Pow(rescaled, StickCurveExponent);
+            double scale  = curved / mag;
+            float mx = (float)(rx * scale);
+            float my = (float)(ry * scale);
+            return new Vec2(mx, my);
         }
 
         // -----------------------------------------------------------------------
