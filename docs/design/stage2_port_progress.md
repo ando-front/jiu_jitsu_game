@@ -154,8 +154,10 @@ Pure / テスト / Platform / Editor 自動化 / MCP / Scenario picker wiring �
    (top-left: phase/input/sim, top-right: controls hint, bottom-left: coach,
    bottom-right: event log) + ライフサイクル中央オーバーレイ。`UIDocument` に
    `.uxml` を Inspector でアサインして既存 `BJJDebugHud` と差し替え可能。
-4. ~~**PlayMode テスト**~~ 🟢 **完了 (2026-04-26)** — `Tests/PlayMode/BJJInputProviderPlayModeTests.cs`
-   (4 ケース) + `BJJSimulator.PlayModeTests.asmdef` を追加。PR #19 マージ済み。
+4. ~~**PlayMode テスト**~~ 🟢 **完了 (2026-04-26 / 2026-05-08 拡張)** —
+   `Tests/PlayMode/BJJInputProviderPlayModeTests.cs` (4 ケース、PR #19) +
+   `Tests/PlayMode/BJJAnimatorBinderPlayModeTests.cs` (3 ケース、binder の
+   prev-state cache / lifecycle subscribe / OnDestroy unsubscribe を検証)。
 5. ~~**PostProcess + Camera Shake**~~ 🟢 **完了 (2026-04-27)** — `Runtime/Platform/BJJImpactFeedback.cs`
    を追加。`pulseFlash` → `ColorAdjustments.colorFilter` 減衰、`setWindowTint` →
    `ChromaticAberration.intensity`(判断窓状態に追従)、`pulseShake` → カメラ
