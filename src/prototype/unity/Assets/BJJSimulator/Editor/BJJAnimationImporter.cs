@@ -68,17 +68,33 @@ namespace BJJSimulator.EditorTools
         // "Pull" so the more specific match doesn't get swallowed).
         private static readonly (string Token, StateBinding Binding)[] FILENAME_TO_STATE = new[]
         {
+            // Reaching — extending the arm forward / outward to grab a target.
             ("Reach",     new StateBinding { StateName = "Reaching", HandStateValue = HandStateReaching, LoopTime = true,  Speed = 1f }),
             ("Punch",     new StateBinding { StateName = "Reaching", HandStateValue = HandStateReaching, LoopTime = false, Speed = 1f }),
+            ("Jab",       new StateBinding { StateName = "Reaching", HandStateValue = HandStateReaching, LoopTime = false, Speed = 1f }),
             ("Stab",      new StateBinding { StateName = "Reaching", HandStateValue = HandStateReaching, LoopTime = false, Speed = 1f }),
+
+            // Contact — the moment the hand makes/closes contact with the
+            // opponent (clinch entry, takedown shoot).
+            ("Takedown",  new StateBinding { StateName = "Contact",  HandStateValue = HandStateContact,  LoopTime = false, Speed = 1f }),
             ("Grappling", new StateBinding { StateName = "Contact",  HandStateValue = HandStateContact,  LoopTime = true,  Speed = 1f }),
             ("Contact",   new StateBinding { StateName = "Contact",  HandStateValue = HandStateContact,  LoopTime = true,  Speed = 1f }),
             ("Wrist",     new StateBinding { StateName = "Contact",  HandStateValue = HandStateContact,  LoopTime = true,  Speed = 1f }),
             ("Removing",  new StateBinding { StateName = "Contact",  HandStateValue = HandStateContact,  LoopTime = true,  Speed = 1f }),
+
+            // Gripped — fingers closed on the gi / wrist, actively holding
+            // and usually pulling.  ReplaceExistingMotion=true so the
+            // earlier Y Bot@Idle placeholder upgrades cleanly.
             ("Pulling",   new StateBinding { StateName = "Gripped",  HandStateValue = HandStateGripped,  LoopTime = true,  Speed = 1f, ReplaceExistingMotion = true }),
             ("Pull",      new StateBinding { StateName = "Gripped",  HandStateValue = HandStateGripped,  LoopTime = true,  Speed = 1f, ReplaceExistingMotion = true }),
             ("Grip",      new StateBinding { StateName = "Gripped",  HandStateValue = HandStateGripped,  LoopTime = true,  Speed = 1f, ReplaceExistingMotion = true }),
             ("Hold",      new StateBinding { StateName = "Gripped",  HandStateValue = HandStateGripped,  LoopTime = true,  Speed = 1f, ReplaceExistingMotion = true }),
+
+            // Retract — pulling the hand back to chest / framing arm. A
+            // boxer "Block" (forearm raised, hand to face) reads as the
+            // closest single-clip match for BJJ frame-and-retract until a
+            // dedicated frame anim is sourced.
+            ("Block",     new StateBinding { StateName = "Retract",  HandStateValue = HandStateRetract,  LoopTime = true,  Speed = 1f }),
             ("Retract",   new StateBinding { StateName = "Retract",  HandStateValue = HandStateRetract,  LoopTime = false, Speed = 1f }),
             ("Recoil",    new StateBinding { StateName = "Retract",  HandStateValue = HandStateRetract,  LoopTime = false, Speed = 1f }),
             ("Withdraw",  new StateBinding { StateName = "Retract",  HandStateValue = HandStateRetract,  LoopTime = false, Speed = 1f }),
@@ -169,12 +185,21 @@ namespace BJJSimulator.EditorTools
 
         private static StateBinding? ResolveBinding(string fbxPath)
         {
-            // We only want clip files like `Y Bot@Reach Forward.fbx` — skip the
-            // base mesh `Y Bot.fbx` itself (no `@`) and any other character FBX.
+            // Two filename conventions are accepted:
+            //   1. Mixamo "in place" download:  `Y Bot@<ClipName>.fbx`
+            //      (use the part after `@` so the `Y Bot` prefix doesn't
+            //      false-match against tokens like Bottom).
+            //   2. Mixamo direct download:      `<ClipName>.fbx`
+            //      (use the whole basename — what mixamo.com gives by default
+            //      when the user picks a Without Skin export).
+            // The base mesh `Y Bot.fbx` (just "Y Bot" with no clip suffix) is
+            // explicitly skipped so we never re-import the rig.
             var fileName = Path.GetFileNameWithoutExtension(fbxPath);
+            if (string.Equals(fileName, "Y Bot", System.StringComparison.OrdinalIgnoreCase))
+                return null;
+
             int atIdx = fileName.IndexOf('@');
-            if (atIdx < 0) return null;
-            var clipPart = fileName.Substring(atIdx + 1);
+            var clipPart = atIdx >= 0 ? fileName.Substring(atIdx + 1) : fileName;
 
             foreach (var (token, binding) in FILENAME_TO_STATE)
                 if (clipPart.IndexOf(token, System.StringComparison.OrdinalIgnoreCase) >= 0)
