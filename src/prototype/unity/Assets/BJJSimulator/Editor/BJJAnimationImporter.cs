@@ -1,12 +1,13 @@
 // EDITOR — bulk Mixamo animation importer + Animator Controller wiring.
 //
 // Usage:
-//   1. Drop downloaded Mixamo FBX files into Assets/BJJSimulator/Art/Animations/.
-//      Use the Y Bot rig and "Without Skin" download option (~50KB per clip).
-//      The filename's "@<clip name>" suffix drives the state mapping below
-//      (e.g. `Y Bot@Reach Forward.fbx` → Reaching state).
+//   1. Drop Mixamo FBX clips anywhere under Assets/BJJSimulator/Art/Animations/.
+//      The importer recurses, so Asset Store packs (Farming Pack/, Lite Magic
+//      Pack/, etc.) work without flattening their folder structure.
+//      Filenames drive the state mapping below — `Y Bot@<ClipName>.fbx` and
+//      `<ClipName>.fbx` are both accepted.
 //   2. Menu: BJJ → Import Animations
-//      - Forces every Y Bot@*.fbx to Humanoid + CopyFromOther YBotAvatar.
+//      - Forces every matching FBX to Humanoid + CopyFromOther YBotAvatar.
 //      - Adds matching states to BJJAvatar.controller and wires AnyState
 //        transitions on LHandState / RHandState.
 //      - Idempotent: re-running just refreshes motion references and
@@ -75,12 +76,14 @@ namespace BJJSimulator.EditorTools
             ("Stab",      new StateBinding { StateName = "Reaching", HandStateValue = HandStateReaching, LoopTime = false, Speed = 1f }),
 
             // Contact — the moment the hand makes/closes contact with the
-            // opponent (clinch entry, takedown shoot).
+            // opponent (clinch entry, takedown shoot, lunging grab).
             ("Takedown",  new StateBinding { StateName = "Contact",  HandStateValue = HandStateContact,  LoopTime = false, Speed = 1f }),
             ("Grappling", new StateBinding { StateName = "Contact",  HandStateValue = HandStateContact,  LoopTime = true,  Speed = 1f }),
             ("Contact",   new StateBinding { StateName = "Contact",  HandStateValue = HandStateContact,  LoopTime = true,  Speed = 1f }),
             ("Wrist",     new StateBinding { StateName = "Contact",  HandStateValue = HandStateContact,  LoopTime = true,  Speed = 1f }),
             ("Removing",  new StateBinding { StateName = "Contact",  HandStateValue = HandStateContact,  LoopTime = true,  Speed = 1f }),
+            ("Attack",    new StateBinding { StateName = "Contact",  HandStateValue = HandStateContact,  LoopTime = false, Speed = 1f }),
+            ("Pick",      new StateBinding { StateName = "Contact",  HandStateValue = HandStateContact,  LoopTime = false, Speed = 1f }),
 
             // Gripped — fingers closed on the gi / wrist, actively holding
             // and usually pulling.  ReplaceExistingMotion=true so the
@@ -130,7 +133,7 @@ namespace BJJSimulator.EditorTools
             int wiredCount    = 0;
             var errors = new List<string>();
 
-            foreach (var fbxPath in Directory.GetFiles(AnimationsFolder, "*.fbx"))
+            foreach (var fbxPath in Directory.GetFiles(AnimationsFolder, "*.fbx", SearchOption.AllDirectories))
             {
                 var assetPath = fbxPath.Replace('\\', '/');
                 var binding   = ResolveBinding(assetPath);
@@ -152,7 +155,7 @@ namespace BJJSimulator.EditorTools
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
 
-            foreach (var fbxPath in Directory.GetFiles(AnimationsFolder, "*.fbx"))
+            foreach (var fbxPath in Directory.GetFiles(AnimationsFolder, "*.fbx", SearchOption.AllDirectories))
             {
                 var assetPath = fbxPath.Replace('\\', '/');
                 var binding   = ResolveBinding(assetPath);
