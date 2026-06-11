@@ -1,0 +1,747 @@
+// PURE — procedural pose synthesis for the Stage 1 blockman rigs.
+//
+// Maps the sim's FSM states (hand / foot / posture break / stamina) plus the
+// live Layer-B intent onto joint-angle targets for an articulated rig:
+//
+//   - Bottom player: supine closed guard — torso curled toward the opponent,
+//     legs wrapped (LOCKED) or framing (UNLOCKED), arms reaching for grip
+//     zones overhead.
+//   - Top player: kneeling combat base — posture break crumples the torso,
+//     hands post toward base zones, fatigue rounds the shoulders.
+//
+// All outputs are *targets*; the platform rig (blockman.ts) smooths them with
+// damped springs so motion stays continuous when FSM states snap. Periodic
+// motion (breathing, lock-up effort wobble) is synthesised here from `nowMs`
+// — the sim's game clock — so slow-mo judgment windows slow the body too.
+// Tremor amplitudes are returned separately because high-frequency jitter
+// must be added *after* spring smoothing or the spring filters it out.
+//
+// Conventions (mirrored by blockman.ts):
+//   - pitch  rotX. Limbs hang along −y, so *negative* shoulder/hip pitch
+//     swings them toward the chest front; torso and head extend along +y,
+//     so *positive* torso/head pitch curls them toward the chest front.
+//   - roll   rotZ, positive = limb swings out from the body (rig applies the
+//     side mirror).
+//   - yaw    rotY, positive = outward (rig mirrors).
+//   - elbowBend / kneeBend ≥ 0, positive = joint folds.
+//   - pelvis offsets are world-axis metres relative to the rig's base spot.
+
+import type { GripZone } from "../input/intent.js";
+import type { Technique } from "../state/judgment_window.js";
+import type { CounterTechnique } from "../state/counter_window.js";
+
+export type ArmPose = Readonly<{
+  shoulderPitch: number;
+  shoulderRoll: number;
+  shoulderYaw: number;
+  elbowBend: number;
+  // 0..1 post-smoothing jitter amplitude (grip strain, effort).
+  tremor: number;
+}>;
+
+export type LegPose = Readonly<{
+  hipPitch: number;
+  hipYaw: number;
+  hipRoll: number;
+  kneeBend: number;
+}>;
+
+export type BodyPose = Readonly<{
+  pelvisX: number;
+  pelvisY: number;
+  pelvisZ: number;
+  pelvisPitch: number;
+  pelvisYaw: number;
+  pelvisRoll: number;
+  torsoPitch: number;
+  torsoYaw: number;
+  torsoRoll: number;
+  torsoTremor: number;
+  headPitch: number;
+  headYaw: number;
+  // Raw −1..1 breathing oscillator; rig maps it to chest scale. Kept out of
+  // the spring path so the rhythm survives smoothing untouched.
+  breath: number;
+  armL: ArmPose;
+  armR: ArmPose;
+  legL: LegPose;
+  legR: LegPose;
+}>;
+
+export type LimbSnapshot = Readonly<{ state: string; target: string | null }>;
+
+export type BottomPoseInput = Readonly<{
+  nowMs: number;
+  stamina: number; // 0..1
+  guard: "CLOSED" | "OPEN";
+  leftHand: LimbSnapshot;
+  rightHand: LimbSnapshot;
+  leftFootState: string;
+  rightFootState: string;
+  hipAngle: number;   // Layer B hip_angle_target (radians)
+  hipPush: number;    // [-1, 1]
+  hipLateral: number; // [-1, 1]
+  gripStrengthL: number; // [0, 1]
+  gripStrengthR: number;
+  // Judgment window OPEN/OPENING — the attacker coils, loading the hips.
+  windowOpen: boolean;
+}>;
+
+export type TopPoseInput = Readonly<{
+  nowMs: number;
+  stamina: number;
+  leftHand: LimbSnapshot;
+  rightHand: LimbSnapshot;
+  postureBreakX: number; // [-1, 1]
+  postureBreakY: number;
+  weightForward: number; // [-1, 1] defender hip intent
+  weightLateral: number;
+  armExtractedL: boolean;
+  armExtractedR: boolean;
+  // ms since the pass attempt started, or null when idle. Drives the
+  // forward passing pressure (lead knee up, torso low).
+  passElapsedMs: number | null;
+  // ms since each hand's grip-cut attempt started, or null. Drives the
+  // windup → strike → recover chop on that arm.
+  cutElapsedLMs: number | null;
+  cutElapsedRMs: number | null;
+  // Counter window OPEN/OPENING — the defender braces upright.
+  counterWindowOpen: boolean;
+}>;
+
+// -----------------------------------------------------------------------------
+// Reach tables — where each grip / base zone sits relative to the reaching
+// character. Values are shoulder targets at the moment of CONTACT; REACHING
+// extends the elbow further, GRIPPED flexes it back in (pulling).
+
+type ReachTarget = Readonly<{ pitch: number; roll: number; yaw: number; elbow: number }>;
+
+// Attacker (supine). Pitch −θ tilts the arm from "along the body toward the
+// opponent" (θ→0) up toward "straight off the chest" (θ→π/2); the kneeling
+// opponent's grips live in between, higher zones = steeper.
+const ATTACK_ZONE_REACH: Readonly<Record<string, ReachTarget>> = Object.freeze({
+  COLLAR_L:      { pitch: -0.85, roll: 0.10, yaw: -0.20, elbow: 0.50 },
+  COLLAR_R:      { pitch: -0.85, roll: 0.10, yaw: -0.20, elbow: 0.50 },
+  SLEEVE_L:      { pitch: -0.65, roll: 0.12, yaw:  0.10, elbow: 0.55 },
+  SLEEVE_R:      { pitch: -0.65, roll: 0.12, yaw:  0.10, elbow: 0.55 },
+  WRIST_L:       { pitch: -0.60, roll: 0.35, yaw:  0.15, elbow: 0.40 },
+  WRIST_R:       { pitch: -0.60, roll: 0.35, yaw:  0.15, elbow: 0.40 },
+  BELT:          { pitch: -0.40, roll: 0.05, yaw: -0.25, elbow: 0.60 },
+  POSTURE_BREAK: { pitch: -0.95, roll: 0.05, yaw: -0.10, elbow: 0.85 },
+});
+
+// Defender (kneeling): the attacker is *below*, so posting pitches are
+// shallow (arm angled down-forward); BICEP targets the attacker's raised
+// arms and sits higher.
+const DEFENSE_ZONE_REACH: Readonly<Record<string, ReachTarget>> = Object.freeze({
+  CHEST:   { pitch: -0.75, roll: 0.10, yaw: -0.10, elbow: 0.30 },
+  HIP:     { pitch: -0.45, roll: 0.12, yaw:  0.00, elbow: 0.35 },
+  KNEE_L:  { pitch: -0.50, roll: 0.25, yaw:  0.30, elbow: 0.35 },
+  KNEE_R:  { pitch: -0.50, roll: 0.25, yaw:  0.30, elbow: 0.35 },
+  BICEP_L: { pitch: -1.00, roll: 0.15, yaw: -0.05, elbow: 0.35 },
+  BICEP_R: { pitch: -1.00, roll: 0.15, yaw: -0.05, elbow: 0.35 },
+});
+
+// Idle guard frame for the supine attacker: elbows in, hands up like a boxer.
+const ATTACK_REST: ReachTarget = Object.freeze({ pitch: -0.90, roll: 0.10, yaw: 0, elbow: 1.25 });
+// Defender rest: hands posted down onto the opponent's torso below.
+const DEFENSE_REST: ReachTarget = Object.freeze({ pitch: -0.70, roll: 0.14, yaw: 0, elbow: 0.35 });
+// Arm knocked aside by a parry — flung wide, nearly straight.
+const PARRIED_ARM: ReachTarget = Object.freeze({ pitch: -0.75, roll: 0.90, yaw: 0.30, elbow: 0.30 });
+// Defender arm dragged across centre line (omoplata / triangle setups).
+const EXTRACTED_ARM: ReachTarget = Object.freeze({ pitch: -1.30, roll: 0.05, yaw: -0.60, elbow: 0.50 });
+
+const TWO_PI = Math.PI * 2;
+
+function clamp01(v: number): number {
+  return Math.max(0, Math.min(1, v));
+}
+
+function armPoseFrom(
+  hand: LimbSnapshot,
+  table: Readonly<Record<string, ReachTarget>>,
+  rest: ReachTarget,
+  gripStrength: number,
+): ArmPose {
+  const zone = hand.target !== null ? table[hand.target] : undefined;
+  const reach = zone ?? rest;
+  switch (hand.state) {
+    case "REACHING":
+      // Arm shoots out: elbow extends past the contact pose for a visible lunge.
+      return {
+        shoulderPitch: reach.pitch,
+        shoulderRoll: reach.roll,
+        shoulderYaw: reach.yaw,
+        elbowBend: reach.elbow * 0.45,
+        tremor: 0,
+      };
+    case "CONTACT":
+      return {
+        shoulderPitch: reach.pitch,
+        shoulderRoll: reach.roll,
+        shoulderYaw: reach.yaw,
+        elbowBend: reach.elbow,
+        tremor: 0.15,
+      };
+    case "GRIPPED":
+      // Pulling on the grip: elbow flexes in, strain tremor scales with squeeze.
+      return {
+        shoulderPitch: reach.pitch + 0.10,
+        shoulderRoll: reach.roll,
+        shoulderYaw: reach.yaw,
+        elbowBend: reach.elbow + 0.35,
+        tremor: 0.25 + clamp01(gripStrength) * 0.45,
+      };
+    case "PARRIED":
+      return {
+        shoulderPitch: PARRIED_ARM.pitch,
+        shoulderRoll: PARRIED_ARM.roll,
+        shoulderYaw: PARRIED_ARM.yaw,
+        elbowBend: PARRIED_ARM.elbow,
+        tremor: 0,
+      };
+    default: // IDLE / RETRACT → back to the rest frame.
+      return {
+        shoulderPitch: rest.pitch,
+        shoulderRoll: rest.roll,
+        shoulderYaw: rest.yaw,
+        elbowBend: rest.elbow,
+        tremor: 0,
+      };
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Leg solver. Guard legs are authored as *direction pairs* in the supine
+// body frame — where the thigh points (hip → knee) and where the shin points
+// (knee → ankle) — and converted analytically into hip Euler angles (YXZ
+// order, matching the rig's hip groups) plus a knee bend. This is what lets
+// the closed guard genuinely wrap: the hip yaw rotates the knee's fold plane
+// so the shin sweeps *around* the opponent's flank instead of folding flat.
+//
+// Body frame (right leg; the rig mirrors the left): +x = body right,
+// +y = toward the head, +z = chest front. The opponent sits toward −y and
+// "up off the mat" is +z.
+
+type V3 = readonly [number, number, number];
+
+function v3norm(v: V3): V3 {
+  const len = Math.hypot(v[0], v[1], v[2]);
+  return len < 1e-9 ? [0, -1, 0] : [v[0] / len, v[1] / len, v[2] / len];
+}
+
+function v3cross(a: V3, b: V3): V3 {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+}
+
+function v3dot(a: V3, b: V3): number {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+function v3lerp(a: V3, b: V3, t: number): V3 {
+  return [
+    a[0] + (b[0] - a[0]) * t,
+    a[1] + (b[1] - a[1]) * t,
+    a[2] + (b[2] - a[2]) * t,
+  ];
+}
+
+const clampUnit = (v: number): number => Math.max(-1, Math.min(1, v));
+
+// Exported for tests: given thigh direction d1 and shin direction d2 (body
+// frame, right leg), produce hip YXZ Euler angles + knee bend such that the
+// rig's thigh aligns with d1 and the knee fold lands the shin on d2.
+export function solveLeg(d1raw: V3, d2raw: V3): LegPose {
+  const d1 = v3norm(d1raw);
+  const d2 = v3norm(d2raw);
+  // Knee bend axis: rotating d1 toward d2 about +x_local must be a positive
+  // bend, so the local x axis maps onto normalize(d1 × d2).
+  const crossed = v3cross(d1, d2);
+  const crossLen = Math.hypot(crossed[0], crossed[1], crossed[2]);
+  let xAxis: V3;
+  if (crossLen < 1e-5) {
+    // Straight (or fully folded) knee — any perpendicular works; pick one
+    // orthogonal to d1 biased toward the body's lateral axis.
+    const fallback = v3cross(d1, [0, 0, 1] as const);
+    const fbLen = Math.hypot(fallback[0], fallback[1], fallback[2]);
+    xAxis = fbLen < 1e-5 ? [1, 0, 0] : v3norm(fallback);
+  } else {
+    xAxis = [crossed[0] / crossLen, crossed[1] / crossLen, crossed[2] / crossLen];
+  }
+  const yAxis: V3 = [-d1[0], -d1[1], -d1[2]]; // local +y maps to −d1 (limb hangs along −y)
+  const zAxis = v3cross(xAxis, yAxis);
+
+  // Decompose the rotation matrix [xAxis yAxis zAxis] in YXZ order — same
+  // formulas as THREE.Euler.setFromRotationMatrix("YXZ").
+  const m13 = zAxis[0], m23 = zAxis[1], m33 = zAxis[2];
+  const m21 = xAxis[1], m22 = yAxis[1];
+  const m11 = xAxis[0], m31 = xAxis[2];
+  const hipPitch = Math.asin(-clampUnit(m23));
+  let hipYaw: number;
+  let hipRoll: number;
+  if (Math.abs(m23) < 0.9999) {
+    hipYaw = Math.atan2(m13, m33);
+    hipRoll = Math.atan2(m21, m22);
+  } else {
+    hipYaw = Math.atan2(-m31, m11);
+    hipRoll = 0;
+  }
+  const kneeBend = Math.acos(clampUnit(v3dot(d1, d2)));
+  return { hipPitch, hipYaw, hipRoll, kneeBend };
+}
+
+// Forward kinematics, exported for tests: reconstruct the body-frame thigh /
+// shin directions a LegPose produces on the rig (right leg).
+export function legDirections(pose: LegPose): { thigh: V3; shin: V3 } {
+  const rot = (v: V3): V3 => {
+    // Rz (roll) → Rx (pitch) → Ry (yaw), i.e. v' = Ry·Rx·Rz·v (YXZ order).
+    const [cz, sz] = [Math.cos(pose.hipRoll), Math.sin(pose.hipRoll)];
+    const [cx, sx] = [Math.cos(pose.hipPitch), Math.sin(pose.hipPitch)];
+    const [cy, sy] = [Math.cos(pose.hipYaw), Math.sin(pose.hipYaw)];
+    let [x, y, z] = [v[0] * cz - v[1] * sz, v[0] * sz + v[1] * cz, v[2]];
+    [y, z] = [y * cx - z * sx, y * sx + z * cx];
+    [x, z] = [x * cy + z * sy, -x * sy + z * cy];
+    return [x, y, z];
+  };
+  const thigh = rot([0, -1, 0]);
+  const ck = Math.cos(pose.kneeBend);
+  const sk = Math.sin(pose.kneeBend);
+  // Knee folds about hip-local +x: (0,−1,0) → (0,−cosθ,−sinθ).
+  const shin = rot([0, -ck, -sk]);
+  return { thigh, shin };
+}
+
+// Direction pairs per foot state (right leg, body frame). The locked wrap
+// runs the thigh up the opponent's flank and the shin across behind their
+// back, so the ankles cross past the midline; unlocked frames put the foot
+// on the opponent's hip; open guard widens the frame.
+const LEG_DIR_LOCKED = Object.freeze({
+  thigh: [0.31, -0.76, 0.56] as V3,
+  shin: [-0.84, -0.53, -0.16] as V3,
+});
+const LEG_DIR_UNLOCKED = Object.freeze({
+  thigh: [0.52, -0.69, 0.49] as V3,
+  shin: [-0.75, -0.66, 0.0] as V3,
+});
+const LEG_DIR_OPEN = Object.freeze({
+  thigh: [0.62, -0.65, 0.35] as V3,
+  shin: [-0.45, -0.85, -0.2] as V3,
+});
+
+function bottomLegPose(footState: string, guard: "CLOSED" | "OPEN", nowMs: number): LegPose {
+  const unlocked = guard === "OPEN" ? LEG_DIR_OPEN : LEG_DIR_UNLOCKED;
+  switch (footState) {
+    case "LOCKED":
+      return solveLeg(LEG_DIR_LOCKED.thigh, LEG_DIR_LOCKED.shin);
+    case "LOCKING": {
+      // Fighting to close: oscillate between half-closed and nearly-closed
+      // so the squeeze effort is visible.
+      const mix = 0.6 + Math.sin((nowMs / 1000) * TWO_PI * 3.2) * 0.25;
+      return solveLeg(
+        v3lerp(unlocked.thigh, LEG_DIR_LOCKED.thigh, mix),
+        v3lerp(unlocked.shin, LEG_DIR_LOCKED.shin, mix),
+      );
+    }
+    default: // UNLOCKED
+      return solveLeg(unlocked.thigh, unlocked.shin);
+  }
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+function lerpArm(a: ArmPose, b: ArmPose, t: number): ArmPose {
+  return {
+    shoulderPitch: lerp(a.shoulderPitch, b.shoulderPitch, t),
+    shoulderRoll: lerp(a.shoulderRoll, b.shoulderRoll, t),
+    shoulderYaw: lerp(a.shoulderYaw, b.shoulderYaw, t),
+    elbowBend: lerp(a.elbowBend, b.elbowBend, t),
+    tremor: lerp(a.tremor, b.tremor, t),
+  };
+}
+
+function lerpLeg(a: LegPose, b: LegPose, t: number): LegPose {
+  return {
+    hipPitch: lerp(a.hipPitch, b.hipPitch, t),
+    hipYaw: lerp(a.hipYaw, b.hipYaw, t),
+    hipRoll: lerp(a.hipRoll, b.hipRoll, t),
+    kneeBend: lerp(a.kneeBend, b.kneeBend, t),
+  };
+}
+
+const mkArm = (
+  pitch: number,
+  roll: number,
+  yaw: number,
+  elbow: number,
+  tremor = 0,
+): ArmPose => ({
+  shoulderPitch: pitch,
+  shoulderRoll: roll,
+  shoulderYaw: yaw,
+  elbowBend: elbow,
+  tremor,
+});
+
+// Grip-cut chop (defender, §4.2): raise out, swat across the centre line,
+// recover. Timed against CUT_TIMING.attemptMs = 1500.
+const CUT_WINDUP = mkArm(-1.25, 0.55, 0.2, 0.5, 0.1);
+const CUT_STRIKE = mkArm(-0.5, 0.05, -0.45, 0.2, 0);
+
+function cutChopArm(base: ArmPose, elapsedMs: number): ArmPose {
+  if (elapsedMs < 280) return lerpArm(base, CUT_WINDUP, elapsedMs / 280);
+  if (elapsedMs < 620) return lerpArm(CUT_WINDUP, CUT_STRIKE, (elapsedMs - 280) / 340);
+  return lerpArm(CUT_STRIKE, base, clamp01((elapsedMs - 620) / 880));
+}
+
+// Zones whose pursuit visibly curls the attacker up off the mat.
+const HIGH_REACH_ZONES: ReadonlySet<string> = new Set<GripZone>([
+  "COLLAR_L",
+  "COLLAR_R",
+  "POSTURE_BREAK",
+]);
+
+function isActiveHigh(hand: LimbSnapshot): boolean {
+  if (hand.target === null || !HIGH_REACH_ZONES.has(hand.target)) return false;
+  return hand.state === "REACHING" || hand.state === "CONTACT" || hand.state === "GRIPPED";
+}
+
+// -----------------------------------------------------------------------------
+
+export function computeBottomPose(input: BottomPoseInput): BodyPose {
+  const fatigue = clamp01(1 - input.stamina);
+  // Breathing speeds up as stamina drains (§5.4's "呼吸が重い" zone).
+  const breathHz = 0.28 + fatigue * 0.55;
+  const breath = Math.sin((input.nowMs / 1000) * TWO_PI * breathHz);
+
+  // Sit-up crunch when actively attacking the collar / posture-break line.
+  const sitUp = isActiveHigh(input.leftHand) || isActiveHigh(input.rightHand) ? 0.22 : 0;
+  const legsLocked =
+    input.leftFootState === "LOCKED" && input.rightFootState === "LOCKED";
+  // Judgment window: the body coils — hips load, torso curls in tighter.
+  const coil = input.windowOpen ? 1 : 0;
+
+  return {
+    pelvisX: input.hipLateral * 0.20,
+    pelvisY: 0.26 + (legsLocked ? 0.05 : 0) + Math.abs(input.hipPush) * 0.03 + coil * 0.04,
+    pelvisZ: input.hipPush * 0.30,
+    // Supine: −π/2 lays the body flat with the chest facing up and (after
+    // the rig's yaw flip) the head toward the camera; the small addition
+    // keeps the shoulders just off the mat.
+    pelvisPitch: -Math.PI / 2 + 0.15,
+    pelvisYaw: input.hipAngle,
+    pelvisRoll: input.hipLateral * 0.25,
+    // Positive pitch curls the chest up toward the opponent (supine front
+    // = world up); fatigue sags it back toward the mat.
+    torsoPitch: 0.20 + sitUp * 0.7 + coil * 0.10 + breath * 0.04 - fatigue * 0.15,
+    torsoYaw: input.hipAngle * 0.35,
+    torsoRoll: input.hipLateral * 0.18,
+    torsoTremor: 0,
+    headPitch: 0.45 + sitUp * 0.4 - fatigue * 0.35,
+    headYaw: input.hipAngle * 0.3,
+    breath,
+    armL: armPoseFrom(input.leftHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthL),
+    armR: armPoseFrom(input.rightHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthR),
+    legL: bottomLegPose(input.leftFootState, input.guard, input.nowMs),
+    legR: bottomLegPose(input.rightFootState, input.guard, input.nowMs),
+  };
+}
+
+export function computeTopPose(input: TopPoseInput): BodyPose {
+  const fatigue = clamp01(1 - input.stamina);
+  const breathHz = 0.28 + fatigue * 0.55;
+  // Phase-offset so the two bodies never breathe in lockstep.
+  const breath = Math.sin((input.nowMs / 1000) * TWO_PI * breathHz + Math.PI * 0.6);
+
+  const pbX = input.postureBreakX;
+  const pbY = input.postureBreakY;
+  const pbMag = clamp01(Math.hypot(pbX, pbY));
+  // Strain tremor while fighting a deep posture break.
+  const strain = pbMag > 0.45 ? (pbMag - 0.45) * 0.9 : 0;
+
+  let armL = input.armExtractedL
+    ? mkArm(EXTRACTED_ARM.pitch, EXTRACTED_ARM.roll, EXTRACTED_ARM.yaw, EXTRACTED_ARM.elbow, 0.25)
+    : armPoseFrom(input.leftHand, DEFENSE_ZONE_REACH, DEFENSE_REST, 0.5);
+  let armR = input.armExtractedR
+    ? mkArm(EXTRACTED_ARM.pitch, EXTRACTED_ARM.roll, EXTRACTED_ARM.yaw, EXTRACTED_ARM.elbow, 0.25)
+    : armPoseFrom(input.rightHand, DEFENSE_ZONE_REACH, DEFENSE_REST, 0.5);
+  // A grip cut overrides the hand FSM read for the chopping arm.
+  if (input.cutElapsedLMs !== null) armL = cutChopArm(armL, input.cutElapsedLMs);
+  if (input.cutElapsedRMs !== null) armR = cutChopArm(armR, input.cutElapsedRMs);
+
+  // Kneeling combat base; weight intent rocks the hips, posture break drags
+  // the whole pelvis toward the attacker.
+  const kneel: LegPose = {
+    hipPitch: -0.55 + input.weightForward * 0.15,
+    hipYaw: 0,
+    hipRoll: 0.30,
+    kneeBend: 2.00,
+  };
+
+  // Pass attempt: drive in low — lead knee steps up (knee-slice shape),
+  // trail leg extends back, torso drops, hips surge forward.
+  const passT = input.passElapsedMs === null ? 0 : clamp01(input.passElapsedMs / 400);
+  const passSurge =
+    input.passElapsedMs === null
+      ? 0
+      : Math.sin((input.passElapsedMs / 1000) * TWO_PI * 1.5) * 0.04;
+  const driveRight = input.weightLateral >= 0;
+  const leadLeg = lerpLeg(kneel, { hipPitch: -1.15, hipYaw: 0, hipRoll: 0.25, kneeBend: 1.45 }, passT);
+  const trailLeg = lerpLeg(kneel, { hipPitch: -0.20, hipYaw: 0, hipRoll: 0.30, kneeBend: 0.70 }, passT);
+
+  // Counter window: brace — posture up a touch, ready to spring.
+  const brace = input.counterWindowOpen ? 1 : 0;
+
+  return {
+    pelvisX: pbX * 0.25 + input.weightLateral * 0.22 + (driveRight ? 1 : -1) * passT * 0.10,
+    pelvisY: 0.50 - fatigue * 0.04 - pbMag * 0.06 - passT * 0.06 + brace * 0.02,
+    pelvisZ: pbY * 0.30 + input.weightForward * 0.22 + passT * (0.18 + passSurge),
+    pelvisPitch: 0,
+    pelvisYaw: 0,
+    pelvisRoll: input.weightLateral * 0.10,
+    // Combat-base hunch (constant +0.10 forward), then posture break
+    // crumples the torso forward / sideways; the pass drive and fatigue
+    // round it further, while a counter brace straightens it.
+    torsoPitch:
+      0.10 + pbY * 0.55 + input.weightForward * 0.10 + fatigue * 0.12 + breath * 0.03 +
+      passT * 0.30 - brace * 0.08,
+    torsoYaw: pbX * 0.20,
+    torsoRoll: pbX * 0.45,
+    torsoTremor: strain + passT * 0.15,
+    // Eyes stay on the opponent below; exhaustion drops the chin further.
+    headPitch: 0.45 + fatigue * 0.25 + Math.max(0, pbY) * 0.20,
+    headYaw: -pbX * 0.25,
+    breath,
+    armL,
+    armR,
+    legL: driveRight ? trailLeg : leadLeg,
+    legR: driveRight ? leadLeg : trailLeg,
+  };
+}
+
+// -----------------------------------------------------------------------------
+// Finish tableaux. When a technique / counter / pass resolves, the sim's
+// FSM-driven pose stops telling the story — the bodies need to land in the
+// recognisable end position of that move. `computeFinishPoses` returns both
+// bodies' poses for a confirmed outcome; `tMs` is time since confirmation
+// (drives squeeze pulses and heavy post-scramble breathing). The rig's
+// springs handle the transition into the tableau, so these are pure holds.
+
+export type FinishKind = Technique | CounterTechnique | "PASS";
+
+export type FinishPoses = Readonly<{ bottom: BodyPose; top: BodyPose }>;
+
+export function computeFinishPoses(kind: FinishKind, tMs: number): FinishPoses {
+  // Post-resolution breathing is heavy regardless of stamina.
+  const breathB = Math.sin((tMs / 1000) * TWO_PI * 0.9);
+  const breathT = Math.sin((tMs / 1000) * TWO_PI * 0.9 + Math.PI * 0.6);
+  // Submission squeeze pulse, 0..1.
+  const squeeze = 0.5 + 0.5 * Math.sin((tMs / 1000) * TWO_PI * 1.2);
+
+  // Neutral supine / kneeling bases; each tableau overrides what it needs.
+  const bottom: { -readonly [K in keyof BodyPose]: BodyPose[K] } = {
+    pelvisX: 0, pelvisY: 0.28, pelvisZ: 0,
+    pelvisPitch: -Math.PI / 2 + 0.15, pelvisYaw: 0, pelvisRoll: 0,
+    torsoPitch: 0.35 + breathB * 0.04, torsoYaw: 0, torsoRoll: 0, torsoTremor: 0,
+    headPitch: 0.55, headYaw: 0,
+    breath: breathB,
+    armL: mkArm(ATTACK_REST.pitch, ATTACK_REST.roll, ATTACK_REST.yaw, ATTACK_REST.elbow),
+    armR: mkArm(ATTACK_REST.pitch, ATTACK_REST.roll, ATTACK_REST.yaw, ATTACK_REST.elbow),
+    legL: solveLeg(LEG_DIR_LOCKED.thigh, LEG_DIR_LOCKED.shin),
+    legR: solveLeg(LEG_DIR_LOCKED.thigh, LEG_DIR_LOCKED.shin),
+  };
+  const top: { -readonly [K in keyof BodyPose]: BodyPose[K] } = {
+    pelvisX: 0, pelvisY: 0.50, pelvisZ: 0,
+    pelvisPitch: 0, pelvisYaw: 0, pelvisRoll: 0,
+    torsoPitch: 0.10 + breathT * 0.03, torsoYaw: 0, torsoRoll: 0, torsoTremor: 0,
+    headPitch: 0.45, headYaw: 0,
+    breath: breathT,
+    armL: mkArm(DEFENSE_REST.pitch, DEFENSE_REST.roll, DEFENSE_REST.yaw, DEFENSE_REST.elbow),
+    armR: mkArm(DEFENSE_REST.pitch, DEFENSE_REST.roll, DEFENSE_REST.yaw, DEFENSE_REST.elbow),
+    legL: { hipPitch: -0.55, hipYaw: 0, hipRoll: 0.30, kneeBend: 2.0 },
+    legR: { hipPitch: -0.55, hipYaw: 0, hipRoll: 0.30, kneeBend: 2.0 },
+  };
+
+  switch (kind) {
+    case "TRIANGLE": {
+      // Legs locked high around the neck, both hands pulling the head down;
+      // the defender is folded deep, posting wide and shuddering.
+      bottom.pelvisY = 0.34 + squeeze * 0.015;
+      bottom.torsoPitch = 0.45;
+      bottom.legR = solveLeg([0.18, -0.50, 0.85], [-0.90, -0.25, -0.35]);
+      bottom.legL = solveLeg([0.35, -0.55, 0.76], [-0.70, -0.50, -0.50]);
+      bottom.armL = mkArm(-0.70, 0.10, -0.15, 1.05 + squeeze * 0.08, 0.5);
+      bottom.armR = mkArm(-0.70, 0.10, -0.15, 1.05 + squeeze * 0.08, 0.5);
+      top.pelvisY = 0.42;
+      top.pelvisZ = 0.18;
+      top.torsoPitch = 0.85;
+      top.headPitch = 0.95;
+      top.torsoTremor = 0.45;
+      top.armL = mkArm(-0.50, 0.55, 0.1, 0.25, 0.4);
+      top.armR = mkArm(-0.50, 0.55, 0.1, 0.25, 0.4);
+      break;
+    }
+    case "OMOPLATA": {
+      // Attacker turned out, one leg thrown over the trapped shoulder; the
+      // defender is folded face-down with the arm wound behind.
+      bottom.pelvisYaw = 0.80;
+      bottom.pelvisY = 0.30;
+      bottom.torsoPitch = 0.60;
+      bottom.legL = solveLeg([-0.35, -0.55, 0.75], [-0.60, -0.70, -0.30]);
+      bottom.legR = solveLeg([0.70, -0.50, 0.40], [-0.20, -0.90, -0.20]);
+      bottom.armL = mkArm(-0.50, 0.15, -0.10, 0.70, 0.3);
+      bottom.armR = mkArm(-0.55, 0.20, -0.10, 0.65, 0.3);
+      top.pelvisY = 0.34;
+      top.pelvisZ = 0.25;
+      top.torsoPitch = 1.15;
+      top.headPitch = 1.0;
+      top.torsoTremor = 0.35;
+      top.armL = mkArm(0.70, 0.10, -0.50, 0.90, 0.5); // wound behind the back
+      top.armR = mkArm(-0.50, 0.50, 0.10, 0.30, 0.2);
+      break;
+    }
+    case "SCISSOR_SWEEP": {
+      // Defender toppled sideways onto his back; attacker rides up after him.
+      bottom.pelvisY = 0.38;
+      bottom.pelvisZ = -0.12;
+      bottom.torsoPitch = 0.85;
+      bottom.headPitch = 0.75;
+      bottom.legR = solveLeg([0.40, -0.70, 0.35], [-0.50, -0.80, -0.10]);
+      bottom.legL = solveLeg([0.10, -0.95, 0.15], [0.10, -0.90, -0.30]);
+      bottom.armL = mkArm(-0.70, 0.10, -0.10, 0.90, 0.3);
+      bottom.armR = mkArm(-0.70, 0.10, -0.10, 0.90, 0.3);
+      top.pelvisX = 0.50;
+      top.pelvisY = 0.28;
+      top.pelvisRoll = 1.30;
+      top.torsoPitch = -0.15;
+      top.headPitch = -0.20;
+      top.armL = mkArm(-1.20, 0.70, 0.0, 0.25, 0.2);
+      top.armR = mkArm(-1.20, 0.70, 0.0, 0.25, 0.2);
+      top.legL = { hipPitch: -0.90, hipYaw: 0, hipRoll: 0.35, kneeBend: 1.0 };
+      top.legR = { hipPitch: -0.40, hipYaw: 0, hipRoll: 0.40, kneeBend: 1.4 };
+      break;
+    }
+    case "FLOWER_SWEEP": {
+      // Same story, mirrored, with the sweeping leg arcing high.
+      bottom.pelvisY = 0.38;
+      bottom.pelvisZ = -0.12;
+      bottom.torsoPitch = 0.85;
+      bottom.headPitch = 0.75;
+      bottom.legL = solveLeg([0.50, -0.40, 0.75], [-0.60, -0.60, -0.30]);
+      bottom.legR = solveLeg([0.10, -0.95, 0.15], [0.10, -0.90, -0.30]);
+      bottom.armL = mkArm(-0.70, 0.10, -0.10, 0.90, 0.3);
+      bottom.armR = mkArm(-0.70, 0.10, -0.10, 0.90, 0.3);
+      top.pelvisX = -0.50;
+      top.pelvisY = 0.28;
+      top.pelvisRoll = -1.30;
+      top.torsoPitch = -0.15;
+      top.headPitch = -0.20;
+      top.armL = mkArm(-1.20, 0.70, 0.0, 0.25, 0.2);
+      top.armR = mkArm(-1.20, 0.70, 0.0, 0.25, 0.2);
+      top.legL = { hipPitch: -0.40, hipYaw: 0, hipRoll: 0.40, kneeBend: 1.4 };
+      top.legR = { hipPitch: -0.90, hipYaw: 0, hipRoll: 0.35, kneeBend: 1.0 };
+      break;
+    }
+    case "HIP_BUMP": {
+      // Attacker sat up hard off a posted hand; defender knocked backward.
+      bottom.pelvisY = 0.42;
+      bottom.pelvisZ = -0.10;
+      bottom.torsoPitch = 1.05;
+      bottom.headPitch = 0.20;
+      bottom.armR = mkArm(0.50, 0.30, 0.0, 0.15); // posted behind
+      bottom.armL = mkArm(-1.10, 0.30, -0.10, 0.30, 0.2); // swinging over
+      bottom.legL = solveLeg([0.55, -0.75, 0.25], [-0.40, -0.85, -0.15]);
+      bottom.legR = solveLeg([0.40, -0.80, 0.30], [-0.45, -0.80, -0.15]);
+      top.pelvisY = 0.46;
+      top.pelvisZ = -0.18;
+      top.torsoPitch = -0.45;
+      top.headPitch = -0.30;
+      top.armL = mkArm(-1.40, 0.40, 0.0, 0.20, 0.2);
+      top.armR = mkArm(-1.40, 0.40, 0.0, 0.20, 0.2);
+      top.legL = { hipPitch: -0.35, hipYaw: 0, hipRoll: 0.35, kneeBend: 1.6 };
+      top.legR = { hipPitch: -0.35, hipYaw: 0, hipRoll: 0.35, kneeBend: 1.6 };
+      break;
+    }
+    case "CROSS_COLLAR": {
+      // Wrists crossed deep in the collar; defender slumped over the choke.
+      bottom.torsoPitch = 0.60;
+      bottom.armL = mkArm(-0.80, 0.05, -0.55, 0.85 + squeeze * 0.06, 0.6);
+      bottom.armR = mkArm(-0.80, 0.05, -0.55, 0.85 + squeeze * 0.06, 0.6);
+      top.pelvisY = 0.44;
+      top.pelvisZ = 0.12;
+      top.torsoPitch = 0.70;
+      top.headPitch = 1.0;
+      top.torsoTremor = 0.4;
+      top.armL = mkArm(-0.35, 0.30, 0.0, 0.30, 0.3);
+      top.armR = mkArm(-0.35, 0.30, 0.0, 0.30, 0.3);
+      break;
+    }
+    case "SCISSOR_COUNTER": {
+      // Defender wins the exchange: postured up tall, pinning the knees;
+      // attacker flattened with arms knocked wide.
+      bottom.pelvisY = 0.22;
+      bottom.torsoPitch = 0.10;
+      bottom.headPitch = 0.30;
+      bottom.armL = mkArm(PARRIED_ARM.pitch, PARRIED_ARM.roll, PARRIED_ARM.yaw, PARRIED_ARM.elbow);
+      bottom.armR = mkArm(PARRIED_ARM.pitch, PARRIED_ARM.roll, PARRIED_ARM.yaw, PARRIED_ARM.elbow);
+      bottom.legL = solveLeg([0.65, -0.70, 0.15], [-0.30, -0.90, -0.10]);
+      bottom.legR = solveLeg([0.65, -0.70, 0.15], [-0.30, -0.90, -0.10]);
+      top.pelvisY = 0.52;
+      top.torsoPitch = -0.10;
+      top.headPitch = 0.35;
+      top.armL = mkArm(-0.55, 0.20, 0.0, 0.20);
+      top.armR = mkArm(-0.55, 0.20, 0.0, 0.20);
+      break;
+    }
+    case "TRIANGLE_EARLY_STACK": {
+      // Defender stacks through the early triangle: hips high, driving the
+      // attacker's folded legs back over their own head.
+      bottom.pelvisY = 0.36;
+      bottom.torsoPitch = 0.15;
+      bottom.headPitch = 0.70;
+      bottom.legL = solveLeg([0.25, -0.35, 0.90], [-0.75, -0.35, -0.40]);
+      bottom.legR = solveLeg([0.25, -0.35, 0.90], [-0.75, -0.35, -0.40]);
+      bottom.armL = mkArm(-0.60, 0.25, 0.0, 0.60, 0.3);
+      bottom.armR = mkArm(-0.60, 0.25, 0.0, 0.60, 0.3);
+      top.pelvisY = 0.55;
+      top.pelvisZ = 0.32;
+      top.torsoPitch = 0.75;
+      top.headPitch = 0.7;
+      top.torsoTremor = 0.3;
+      top.armL = mkArm(-0.90, 0.25, 0.0, 0.10, 0.2);
+      top.armR = mkArm(-0.90, 0.25, 0.0, 0.10, 0.2);
+      top.legL = { hipPitch: -0.30, hipYaw: 0, hipRoll: 0.30, kneeBend: 1.2 };
+      top.legR = { hipPitch: -0.30, hipYaw: 0, hipRoll: 0.30, kneeBend: 1.2 };
+      break;
+    }
+    case "PASS": {
+      // Guard passed: defender settled chest-on-chest past the legs, both
+      // of the attacker's legs swept to one side.
+      bottom.pelvisY = 0.20;
+      bottom.torsoPitch = 0.15;
+      bottom.headPitch = 0.35;
+      bottom.legR = solveLeg([-0.55, -0.70, 0.20], [-0.30, -0.85, -0.20]);
+      bottom.legL = solveLeg([0.60, -0.75, 0.15], [0.30, -0.90, -0.15]);
+      bottom.armL = mkArm(-0.75, 0.15, -0.20, 0.70, 0.2);
+      bottom.armR = mkArm(-0.60, 0.20, -0.35, 0.55, 0.2);
+      top.pelvisX = 0.50;
+      top.pelvisY = 0.38;
+      top.pelvisZ = 0.30;
+      top.pelvisYaw = -0.50;
+      top.torsoPitch = 0.55;
+      top.headPitch = 0.55;
+      top.armL = mkArm(-0.75, 0.20, -0.10, 0.60, 0.2);
+      top.armR = mkArm(-0.75, 0.20, -0.10, 0.60, 0.2);
+      top.legL = { hipPitch: -0.15, hipYaw: 0, hipRoll: 0.30, kneeBend: 0.5 };
+      top.legR = { hipPitch: -0.15, hipYaw: 0, hipRoll: 0.35, kneeBend: 0.6 };
+      break;
+    }
+  }
+
+  return { bottom, top };
+}

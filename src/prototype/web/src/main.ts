@@ -32,6 +32,12 @@ import type { Technique } from "./state/judgment_window.js";
 import { breakBucket } from "./state/posture_break.js";
 import { advance, FIXED_STEP_MS, type FixedStepState } from "./sim/fixed_step.js";
 import { createScene } from "./scene/blockman.js";
+import {
+  computeBottomPose,
+  computeFinishPoses,
+  computeTopPose,
+  type FinishKind,
+} from "./scene/pose.js";
 
 type Role = "Bottom" | "Top" | "Spectate";
 const ROLE_CYCLE: readonly Role[] = ["Bottom", "Top", "Spectate"] as const;
@@ -304,6 +310,20 @@ let sessionEndReason: SessionEndReason | null = null;
 let sessionEndElapsedMs = 0;
 const SPECTATE_AUTO_RESTART_MS = 2000;
 
+// -- Finish tableau ------------------------------------------------------------
+// When a technique / counter / pass resolves, the rigs are posed into that
+// move's recognisable end position (pose.ts computeFinishPoses) instead of
+// the FSM-driven pose. Techniques and passes hold until restart (the sim
+// ends right after); counters are transient and release back to live play.
+type FinishTableau = {
+  kind: FinishKind;
+  startedNowMs: number; // g.nowMs when the tableau began (drives its clock)
+  transientUntilMs: number | null; // g.nowMs deadline, null = hold to restart
+};
+let finishTableau: FinishTableau | null = null;
+// Keeps the tableau breathing after the sim stops advancing g.nowMs.
+let endAnimExtraMs = 0;
+
 // -- Pause state -------------------------------------------------------------
 // BTN_PAUSE (Esc / Options) toggles the pause overlay. While paused, the
 // fixed-step loop is halted and the Pause DOM overlay is visible.
@@ -377,6 +397,8 @@ function restartSession() {
   lastIntent = null;
   lastDefense = null;
   eventLog.length = 0;
+  finishTableau = null;
+  endAnimExtraMs = 0;
   activeScenario = null;
   refreshScenarioBarActive(null);
   roundElapsedMs = 0;
@@ -406,6 +428,8 @@ function loadScenario(name: ScenarioName): void {
   lastIntent = null;
   lastDefense = null;
   eventLog.length = 0;
+  finishTableau = null;
+  endAnimExtraMs = 0;
   activeScenario = name;
   roundElapsedMs = 0;
   setCoachTarget(SCENARIO_DEFAULT_TARGET[name]);
@@ -554,6 +578,9 @@ function frame(now: number) {
 
   if (promptActive) {
     runPromptTick();
+    // Pose the rigs into the initial closed-guard tableau so the prompt
+    // backdrop shows the actual fight setup instead of a T-pose.
+    applyToScene(simState.game);
     scene3d.render();
     requestAnimationFrame(frame);
     return;
@@ -577,6 +604,14 @@ function frame(now: number) {
   // the last events' age counters advance instead of freezing.
   if (sessionEndReason !== null) {
     scene3d.updatePulses(realDt);
+    // The sim clock is frozen, but a finish tableau keeps breathing /
+    // squeezing on its own extra clock so the end pose doesn't deadpan.
+    if (finishTableau !== null) {
+      endAnimExtraMs += realDt;
+      const tableauNowMs = simState.game.nowMs + endAnimExtraMs;
+      const fp = computeFinishPoses(finishTableau.kind, tableauNowMs - finishTableau.startedNowMs);
+      scene3d.updateMotion(fp.bottom, fp.top, tableauNowMs);
+    }
     const f = layerA.sample(performance.now());
     lastFrame = f;
     // Spectate: auto-restart after a short delay so you can leave the
@@ -713,10 +748,23 @@ function frame(now: number) {
       case "TECHNIQUE_CONFIRMED":
         scene3d.pulseFlash(0xffd98c, 220);
         scene3d.pulseShake("top", 0.15, 320);
+        // Hold the finishing position until restart (session ends next).
+        finishTableau = {
+          kind: ev.technique,
+          startedNowMs: simState.game.nowMs,
+          transientUntilMs: null,
+        };
         break;
       case "COUNTER_CONFIRMED":
         scene3d.pulseFlash(0x9ec9ff, 220);
         scene3d.pulseShake("bottom", 0.15, 320);
+        // Counters don't end the session — show the position briefly,
+        // then release back to the live FSM-driven pose.
+        finishTableau = {
+          kind: ev.counter,
+          startedNowMs: simState.game.nowMs,
+          transientUntilMs: simState.game.nowMs + 1600,
+        };
         break;
       case "WINDOW_OPENING":
       case "COUNTER_WINDOW_OPENING":
@@ -731,6 +779,11 @@ function frame(now: number) {
       case "PASS_SUCCEEDED":
         scene3d.pulseFlash(0x9ec9ff, 480);
         scene3d.pulseShake("bottom", 0.2, 500);
+        finishTableau = {
+          kind: "PASS",
+          startedNowMs: simState.game.nowMs,
+          transientUntilMs: null,
+        };
         break;
       case "PASS_FAILED":
         scene3d.pulseFlash(0xffb080, 260);
@@ -798,30 +851,72 @@ function runPromptTick() {
 // -- Scene application --------------------------------------------------------
 
 function applyToScene(g: GameState) {
-  // Bottom rig is driven by the attacker intent regardless of who's
-  // supplying it (human-as-Bottom, AI-as-Bottom during Top/Spectate).
-  if (lastIntent !== null && role !== "Top") {
-    scene3d.bottom.root.rotation.y = lastIntent.hip.hip_angle_target;
-    scene3d.bottom.root.position.z = lastIntent.hip.hip_push * 0.3;
-    scene3d.bottom.root.position.x = lastIntent.hip.hip_lateral * 0.2;
-  }
-  // Top rig's weight signals come from defender intent (human-as-Top or
-  // AI-as-Top during Bottom/Spectate). In Spectate specifically, we also
-  // want the postureBreak to keep driving the top rig because defense
-  // intent alone doesn't encode crumple. The logic below handles both.
-  if (lastDefense !== null && role === "Top") {
-    scene3d.top.root.position.x = lastDefense.hip.weight_lateral * 0.25;
-    scene3d.top.root.position.z = -1.1 + lastDefense.hip.weight_forward * 0.25;
+  // Procedural posing — both rigs are driven by FSM states + intents through
+  // pose.ts targets and the rig's spring smoothing. The bottom rig follows
+  // the attacker intent regardless of who supplies it (human-as-Bottom, or
+  // AI-as-Bottom during Top/Spectate); same for the top rig and the defender
+  // intent. Nulls only occur before the first sampled step.
+  const intent = lastIntent ?? NEUTRAL_INTENT;
+  const defense = lastDefense ?? ZERO_DEFENSE_INTENT;
+  const pb = g.top.postureBreak;
+
+  // A resolved technique / counter / pass owns the bodies while active.
+  if (finishTableau !== null) {
+    const expired =
+      finishTableau.transientUntilMs !== null && g.nowMs >= finishTableau.transientUntilMs;
+    if (expired) {
+      finishTableau = null;
+    } else {
+      const fp = computeFinishPoses(finishTableau.kind, g.nowMs - finishTableau.startedNowMs);
+      scene3d.updateMotion(fp.bottom, fp.top, g.nowMs);
+      scene3d.top.setBreakBucket(breakBucket(pb));
+      applySceneOverlays(g);
+      return;
+    }
   }
 
-  const pb = g.top.postureBreak;
-  if (role === "Bottom" || role === "Spectate") {
-    scene3d.top.root.position.x = pb.x * 0.25;
-    scene3d.top.root.position.z = -1.1 + pb.y * 0.3;
-  }
-  scene3d.top.root.rotation.x = -pb.y * 0.4;
-  scene3d.top.root.rotation.z = pb.x * 0.3;
+  const bottomPose = computeBottomPose({
+    nowMs: g.nowMs,
+    stamina: g.bottom.stamina,
+    guard: g.guard,
+    leftHand: { state: g.bottom.leftHand.state, target: g.bottom.leftHand.target },
+    rightHand: { state: g.bottom.rightHand.state, target: g.bottom.rightHand.target },
+    leftFootState: g.bottom.leftFoot.state,
+    rightFootState: g.bottom.rightFoot.state,
+    hipAngle: intent.hip.hip_angle_target,
+    hipPush: intent.hip.hip_push,
+    hipLateral: intent.hip.hip_lateral,
+    gripStrengthL: intent.grip.l_grip_strength,
+    gripStrengthR: intent.grip.r_grip_strength,
+    windowOpen: g.judgmentWindow.state === "OPEN" || g.judgmentWindow.state === "OPENING",
+  });
+  const topPose = computeTopPose({
+    nowMs: g.nowMs,
+    stamina: g.top.stamina,
+    leftHand: { state: g.top.leftHand.state, target: g.top.leftHand.target },
+    rightHand: { state: g.top.rightHand.state, target: g.top.rightHand.target },
+    postureBreakX: pb.x,
+    postureBreakY: pb.y,
+    weightForward: defense.hip.weight_forward,
+    weightLateral: defense.hip.weight_lateral,
+    armExtractedL: g.topArmExtracted.left,
+    armExtractedR: g.topArmExtracted.right,
+    passElapsedMs:
+      g.passAttempt.kind === "IN_PROGRESS" ? g.nowMs - g.passAttempt.startedMs : null,
+    cutElapsedLMs:
+      g.cutAttempts.left.kind === "IN_PROGRESS" ? g.nowMs - g.cutAttempts.left.startedMs : null,
+    cutElapsedRMs:
+      g.cutAttempts.right.kind === "IN_PROGRESS" ? g.nowMs - g.cutAttempts.right.startedMs : null,
+    counterWindowOpen: g.counterWindow.state === "OPEN" || g.counterWindow.state === "OPENING",
+  });
+  scene3d.updateMotion(bottomPose, topPose, g.nowMs);
   scene3d.top.setBreakBucket(breakBucket(pb));
+  applySceneOverlays(g);
+}
+
+// Window tint, initiative light, stamina grading, and FSM limb colours —
+// shared by the live pose path and the finish-tableau path.
+function applySceneOverlays(g: GameState) {
 
   // §D3 — colour limbs by their FSM state. Bottom is the attacker so
   // hand FSMs drive the arms and foot FSMs drive the legs. The defender
