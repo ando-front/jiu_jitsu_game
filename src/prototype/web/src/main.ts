@@ -32,6 +32,7 @@ import type { Technique } from "./state/judgment_window.js";
 import { breakBucket } from "./state/posture_break.js";
 import { advance, FIXED_STEP_MS, type FixedStepState } from "./sim/fixed_step.js";
 import { createScene } from "./scene/blockman.js";
+import { computeBottomPose, computeTopPose } from "./scene/pose.js";
 
 type Role = "Bottom" | "Top" | "Spectate";
 const ROLE_CYCLE: readonly Role[] = ["Bottom", "Top", "Spectate"] as const;
@@ -554,6 +555,9 @@ function frame(now: number) {
 
   if (promptActive) {
     runPromptTick();
+    // Pose the rigs into the initial closed-guard tableau so the prompt
+    // backdrop shows the actual fight setup instead of a T-pose.
+    applyToScene(simState.game);
     scene3d.render();
     requestAnimationFrame(frame);
     return;
@@ -798,29 +802,42 @@ function runPromptTick() {
 // -- Scene application --------------------------------------------------------
 
 function applyToScene(g: GameState) {
-  // Bottom rig is driven by the attacker intent regardless of who's
-  // supplying it (human-as-Bottom, AI-as-Bottom during Top/Spectate).
-  if (lastIntent !== null && role !== "Top") {
-    scene3d.bottom.root.rotation.y = lastIntent.hip.hip_angle_target;
-    scene3d.bottom.root.position.z = lastIntent.hip.hip_push * 0.3;
-    scene3d.bottom.root.position.x = lastIntent.hip.hip_lateral * 0.2;
-  }
-  // Top rig's weight signals come from defender intent (human-as-Top or
-  // AI-as-Top during Bottom/Spectate). In Spectate specifically, we also
-  // want the postureBreak to keep driving the top rig because defense
-  // intent alone doesn't encode crumple. The logic below handles both.
-  if (lastDefense !== null && role === "Top") {
-    scene3d.top.root.position.x = lastDefense.hip.weight_lateral * 0.25;
-    scene3d.top.root.position.z = -1.1 + lastDefense.hip.weight_forward * 0.25;
-  }
-
+  // Procedural posing — both rigs are driven by FSM states + intents through
+  // pose.ts targets and the rig's spring smoothing. The bottom rig follows
+  // the attacker intent regardless of who supplies it (human-as-Bottom, or
+  // AI-as-Bottom during Top/Spectate); same for the top rig and the defender
+  // intent. Nulls only occur before the first sampled step.
+  const intent = lastIntent ?? NEUTRAL_INTENT;
+  const defense = lastDefense ?? ZERO_DEFENSE_INTENT;
   const pb = g.top.postureBreak;
-  if (role === "Bottom" || role === "Spectate") {
-    scene3d.top.root.position.x = pb.x * 0.25;
-    scene3d.top.root.position.z = -1.1 + pb.y * 0.3;
-  }
-  scene3d.top.root.rotation.x = -pb.y * 0.4;
-  scene3d.top.root.rotation.z = pb.x * 0.3;
+
+  const bottomPose = computeBottomPose({
+    nowMs: g.nowMs,
+    stamina: g.bottom.stamina,
+    guard: g.guard,
+    leftHand: { state: g.bottom.leftHand.state, target: g.bottom.leftHand.target },
+    rightHand: { state: g.bottom.rightHand.state, target: g.bottom.rightHand.target },
+    leftFootState: g.bottom.leftFoot.state,
+    rightFootState: g.bottom.rightFoot.state,
+    hipAngle: intent.hip.hip_angle_target,
+    hipPush: intent.hip.hip_push,
+    hipLateral: intent.hip.hip_lateral,
+    gripStrengthL: intent.grip.l_grip_strength,
+    gripStrengthR: intent.grip.r_grip_strength,
+  });
+  const topPose = computeTopPose({
+    nowMs: g.nowMs,
+    stamina: g.top.stamina,
+    leftHand: { state: g.top.leftHand.state, target: g.top.leftHand.target },
+    rightHand: { state: g.top.rightHand.state, target: g.top.rightHand.target },
+    postureBreakX: pb.x,
+    postureBreakY: pb.y,
+    weightForward: defense.hip.weight_forward,
+    weightLateral: defense.hip.weight_lateral,
+    armExtractedL: g.topArmExtracted.left,
+    armExtractedR: g.topArmExtracted.right,
+  });
+  scene3d.updateMotion(bottomPose, topPose, g.nowMs);
   scene3d.top.setBreakBucket(breakBucket(pb));
 
   // §D3 — colour limbs by their FSM state. Bottom is the attacker so
