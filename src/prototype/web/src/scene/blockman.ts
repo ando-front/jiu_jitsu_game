@@ -110,20 +110,19 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
   ground.rotation.x = -Math.PI / 2;
   scene.add(ground);
 
-  // Both rigs face the camera-side player with rotation.y = π so that, with
-  // the bottom player supine (pelvis pitched +π/2), the head lands toward
-  // the camera and the chest faces up. Pose pelvis offsets are world-axis,
-  // so the rig mirrors x/z to compensate for the yaw flip.
-  const bottom = buildBlockman(new THREE.Color(0x5a8cff));
+  // Bottom rig is yaw-flipped π so that, with the pelvis pitched −π/2 into
+  // the supine pose, the head lands toward the camera and the chest faces
+  // up; mirrorXZ compensates its world-axis pelvis offsets for the flip.
+  const bottom = buildBlockman(new THREE.Color(0x5a8cff), true);
   bottom.root.position.set(0, 0, 0);
   bottom.root.rotation.y = Math.PI;
   scene.add(bottom.root);
 
-  // Close enough that the supine player's locked legs visibly wrap the
-  // kneeling defender's waist.
-  const top = buildBlockman(new THREE.Color(0xc9b48a));
-  top.root.position.set(0, 0, -0.68);
-  top.root.rotation.y = Math.PI;
+  // Top rig keeps yaw 0 — its local +z (chest front) faces the supine
+  // player — and kneels close enough that the locked guard legs wrap its
+  // waist with the ankles crossing behind its back.
+  const top = buildBlockman(new THREE.Color(0xc9b48a), false);
+  top.root.position.set(0, 0, -0.5);
   scene.add(top.root);
 
   // --- Vignette overlay ---
@@ -295,8 +294,9 @@ function limbCapsule(
 }
 
 // Exported for headless pose previews (tools/pose_preview.ts) — the rig and
-// its spring smoothing run fine without a WebGL context.
-export function buildBlockman(baseColor: THREE.Color): BlockmanRig {
+// its spring smoothing run fine without a WebGL context. `mirrorXZ` negates
+// the world-axis pelvis offsets for rigs whose root is yaw-flipped π.
+export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): BlockmanRig {
   const root = new THREE.Group();
   const shakeGroup = new THREE.Group();
   root.add(shakeGroup);
@@ -359,6 +359,9 @@ export function buildBlockman(baseColor: THREE.Color): BlockmanRig {
   function buildLeg(sideX: number, mat: THREE.Material): LegJoints {
     const hip = new THREE.Group();
     hip.position.set(sideX, -0.05, 0);
+    // YXZ: yaw turns the knee's fold plane first, then pitch lifts the
+    // thigh within it — matches pose.ts's solveLeg decomposition.
+    hip.rotation.order = "YXZ";
     pelvis.add(hip);
     hip.add(limbCapsule(0.08, 0.22, mat));
     const knee = new THREE.Group();
@@ -453,6 +456,7 @@ export function buildBlockman(baseColor: THREE.Color): BlockmanRig {
     dtS: number,
   ): void {
     joints.hip.rotation.x = drive(`${prefix}.hp`, pose.hipPitch, dtS, TUNE.leg);
+    joints.hip.rotation.y = drive(`${prefix}.hy`, pose.hipYaw, dtS, TUNE.leg) * sideSign;
     joints.hip.rotation.z = drive(`${prefix}.hr`, pose.hipRoll, dtS, TUNE.leg) * sideSign;
     joints.knee.rotation.x = drive(`${prefix}.kb`, pose.kneeBend, dtS, TUNE.leg);
   }
@@ -476,10 +480,10 @@ export function buildBlockman(baseColor: THREE.Color): BlockmanRig {
         lastPoseMs === null ? 0 : Math.max(0, Math.min(0.1, (nowMs - lastPoseMs) / 1000));
       lastPoseMs = nowMs;
 
-      // Root is yaw-flipped π, so world-axis pelvis offsets mirror in x/z.
-      pelvis.position.x = -drive("pv.x", pose.pelvisX, dtS, TUNE.pelvis);
+      const flip = mirrorXZ ? -1 : 1;
+      pelvis.position.x = flip * drive("pv.x", pose.pelvisX, dtS, TUNE.pelvis);
       pelvis.position.y = drive("pv.y", pose.pelvisY, dtS, TUNE.pelvis);
-      pelvis.position.z = -drive("pv.z", pose.pelvisZ, dtS, TUNE.pelvis);
+      pelvis.position.z = flip * drive("pv.z", pose.pelvisZ, dtS, TUNE.pelvis);
       pelvis.rotation.x = drive("pv.p", pose.pelvisPitch, dtS, TUNE.pelvis);
       pelvis.rotation.y = drive("pv.yw", pose.pelvisYaw, dtS, TUNE.pelvis);
       pelvis.rotation.z = drive("pv.r", pose.pelvisRoll, dtS, TUNE.pelvis);

@@ -7,7 +7,10 @@ import { describe, expect, it } from "vitest";
 import {
   computeBottomPose,
   computeTopPose,
+  legDirections,
+  solveLeg,
   type BottomPoseInput,
+  type LegPose,
   type TopPoseInput,
 } from "../../src/scene/pose.js";
 
@@ -96,21 +99,61 @@ describe("computeBottomPose — arms", () => {
   });
 });
 
+// Body-frame ankle position for the (right-leg-authored) solver output:
+// hip joint + thigh + shin, using the rig's segment lengths.
+function anklePos(leg: LegPose): readonly [number, number, number] {
+  const { thigh, shin } = legDirections(leg);
+  const hip = [0.11, -0.05, 0] as const;
+  return [
+    hip[0] + thigh[0] * 0.38 + shin[0] * 0.36,
+    hip[1] + thigh[1] * 0.38 + shin[1] * 0.36,
+    hip[2] + thigh[2] * 0.38 + shin[2] * 0.36,
+  ];
+}
+
+describe("solveLeg / legDirections roundtrip", () => {
+  it("reconstructs the authored thigh and shin directions", () => {
+    const d1 = [0.31, -0.76, 0.56] as const;
+    const d2 = [-0.84, -0.53, -0.16] as const;
+    const { thigh, shin } = legDirections(solveLeg(d1, d2));
+    const n = (v: readonly number[]) => {
+      const len = Math.hypot(v[0]!, v[1]!, v[2]!);
+      return [v[0]! / len, v[1]! / len, v[2]! / len];
+    };
+    const [e1, e2] = [n(d1), n(d2)];
+    expect(thigh[0]).toBeCloseTo(e1[0]!, 5);
+    expect(thigh[1]).toBeCloseTo(e1[1]!, 5);
+    expect(thigh[2]).toBeCloseTo(e1[2]!, 5);
+    expect(shin[0]).toBeCloseTo(e2[0]!, 5);
+    expect(shin[1]).toBeCloseTo(e2[1]!, 5);
+    expect(shin[2]).toBeCloseTo(e2[2]!, 5);
+  });
+});
+
 describe("computeBottomPose — legs and hips", () => {
-  it("LOCKED squeezes knees in; UNLOCKED opens them", () => {
+  it("LOCKED wraps: thigh runs up toward the opponent, ankle crosses the midline", () => {
     const locked = computeBottomPose(bottomInput());
+    const { thigh, shin } = legDirections(locked.legR);
+    expect(thigh[1]).toBeLessThan(0); // toward the opponent (−y body frame)
+    expect(thigh[2]).toBeGreaterThan(0); // lifted off the mat
+    expect(shin[0]).toBeLessThan(0); // shin sweeps across the centre line
+    expect(anklePos(locked.legR)[0]).toBeLessThan(0); // ankle past midline → crossable
+  });
+
+  it("UNLOCKED frames instead of wrapping: ankle stays on its own side", () => {
     const open = computeBottomPose(
       bottomInput({ leftFootState: "UNLOCKED", rightFootState: "UNLOCKED" }),
     );
-    expect(locked.legL.hipRoll).toBeLessThan(0);
-    expect(open.legL.hipRoll).toBeGreaterThan(0);
-    expect(locked.legL.kneeBend).toBeGreaterThan(open.legL.kneeBend);
+    const lockedAnkle = anklePos(computeBottomPose(bottomInput()).legR);
+    const openAnkle = anklePos(open.legR);
+    expect(openAnkle[0]).toBeGreaterThan(0);
+    expect(openAnkle[0]).toBeGreaterThan(lockedAnkle[0]);
   });
 
   it("LOCKING wobbles over time (effort animation)", () => {
     const a = computeBottomPose(bottomInput({ leftFootState: "LOCKING", nowMs: 0 }));
     const b = computeBottomPose(bottomInput({ leftFootState: "LOCKING", nowMs: 150 }));
-    expect(a.legL.kneeBend).not.toBeCloseTo(b.legL.kneeBend, 5);
+    expect(a.legL).not.toEqual(b.legL);
   });
 
   it("hip intent moves the pelvis (push → z, lateral → x + roll)", () => {

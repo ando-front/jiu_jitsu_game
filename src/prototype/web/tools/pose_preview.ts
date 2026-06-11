@@ -182,12 +182,12 @@ const outDir = path.join(import.meta.dirname, "preview");
 fs.mkdirSync(outDir, { recursive: true });
 
 for (const spec of SCENES) {
-  const bottomRig = buildBlockman(new THREE.Color(0x5a8cff));
+  // Must match createScene's rig setup.
+  const bottomRig = buildBlockman(new THREE.Color(0x5a8cff), true);
   bottomRig.root.position.set(0, 0, 0);
   bottomRig.root.rotation.y = Math.PI;
-  const topRig = buildBlockman(new THREE.Color(0xc9b48a));
-  topRig.root.position.set(0, 0, -0.68);
-  topRig.root.rotation.y = Math.PI;
+  const topRig = buildBlockman(new THREE.Color(0xc9b48a), false);
+  topRig.root.position.set(0, 0, -0.5);
 
   // Settle the springs: step the pose for 2 simulated seconds.
   const bIn = bottomBase(spec.bottom);
