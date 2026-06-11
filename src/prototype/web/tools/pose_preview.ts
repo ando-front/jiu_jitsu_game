@@ -15,8 +15,11 @@ import { PNG } from "pngjs";
 import { buildBlockman, type BlockmanRig } from "../src/scene/blockman.js";
 import {
   computeBottomPose,
+  computeFinishPoses,
   computeTopPose,
+  type BodyPose,
   type BottomPoseInput,
+  type FinishKind,
   type TopPoseInput,
 } from "../src/scene/pose.js";
 
@@ -75,9 +78,13 @@ function project(v: THREE.Vector3): { x: number; y: number; scale: number } {
   };
 }
 
-// Draw each mesh as its world-space principal segment (capsules/boxes run
-// along local y; spheres become dots).
-function drawRig(buf: Buffer, rig: BlockmanRig, rgb: RGB): void {
+// Collect each mesh as its world-space principal segment (capsules/boxes
+// run along local y; spheres become dots), so intertwined bodies can be
+// depth-sorted segment-by-segment before drawing (painter's algorithm per
+// limb, not per rig — grappling poses interleave constantly).
+type Segment = { a: THREE.Vector3; b: THREE.Vector3; radius: number; rgb: RGB; depth: number };
+
+function collectSegments(rig: BlockmanRig, rgb: RGB, out: Segment[]): void {
   rig.root.updateMatrixWorld(true);
   rig.root.traverse((obj) => {
     if (!(obj instanceof THREE.Mesh)) return;
@@ -85,6 +92,7 @@ function drawRig(buf: Buffer, rig: BlockmanRig, rgb: RGB): void {
     const params = geo.parameters ?? {};
     let halfLen = 0;
     let radius = 0.05;
+    let axis = new THREE.Vector3(0, 1, 0);
     if ("length" in params) {
       // CapsuleGeometry
       halfLen = (params["length"]! / 2) + (params["radius"] ?? 0);
@@ -93,22 +101,26 @@ function drawRig(buf: Buffer, rig: BlockmanRig, rgb: RGB): void {
       // BoxGeometry — use depth as the long axis for feet.
       halfLen = (params["depth"] ?? 0.1) / 2;
       radius = (params["height"] ?? 0.06) / 2;
-      const a = obj.localToWorld(new THREE.Vector3(0, 0, -halfLen));
-      const b = obj.localToWorld(new THREE.Vector3(0, 0, halfLen));
-      const pa = project(a);
-      const pb = project(b);
-      drawLine(buf, pa.x, pa.y, pb.x, pb.y, radius * 700 * pa.scale, rgb);
-      return;
+      axis = new THREE.Vector3(0, 0, 1);
     } else if ("radius" in params) {
       // SphereGeometry
       radius = params["radius"]!;
     }
-    const a = obj.localToWorld(new THREE.Vector3(0, halfLen, 0));
-    const b = obj.localToWorld(new THREE.Vector3(0, -halfLen, 0));
-    const pa = project(a);
-    const pb = project(b);
-    drawLine(buf, pa.x, pa.y, pb.x, pb.y, radius * 700 * pa.scale, rgb);
+    const a = obj.localToWorld(axis.clone().multiplyScalar(halfLen));
+    const b = obj.localToWorld(axis.clone().multiplyScalar(-halfLen));
+    const mid = a.clone().add(b).multiplyScalar(0.5);
+    const depth = mid.distanceTo(camera.position);
+    out.push({ a, b, radius, rgb, depth });
   });
+}
+
+function drawSegments(buf: Buffer, segments: Segment[]): void {
+  segments.sort((s1, s2) => s2.depth - s1.depth); // back to front
+  for (const s of segments) {
+    const pa = project(s.a);
+    const pb = project(s.b);
+    drawLine(buf, pa.x, pa.y, pb.x, pb.y, s.radius * 700 * pa.scale, s.rgb);
+  }
 }
 
 function drawGroundGrid(buf: Buffer): void {
@@ -133,6 +145,7 @@ function bottomBase(overrides: Partial<BottomPoseInput>): BottomPoseInput {
     leftFootState: "LOCKED", rightFootState: "LOCKED",
     hipAngle: 0, hipPush: 0, hipLateral: 0,
     gripStrengthL: 0, gripStrengthR: 0,
+    windowOpen: false,
     ...overrides,
   };
 }
@@ -144,6 +157,10 @@ function topBase(overrides: Partial<TopPoseInput>): TopPoseInput {
     postureBreakX: 0, postureBreakY: 0,
     weightForward: 0, weightLateral: 0,
     armExtractedL: false, armExtractedR: false,
+    passElapsedMs: null,
+    cutElapsedLMs: null,
+    cutElapsedRMs: null,
+    counterWindowOpen: false,
     ...overrides,
   };
 }
@@ -152,6 +169,9 @@ type SceneSpec = {
   name: string;
   bottom: Partial<BottomPoseInput>;
   top: Partial<TopPoseInput>;
+  // When set, the scene renders computeFinishPoses(kind, tMs) instead of
+  // the live FSM-driven poses.
+  finish?: { kind: FinishKind; tMs: number };
 };
 
 const SCENES: SceneSpec[] = [
@@ -176,6 +196,20 @@ const SCENES: SceneSpec[] = [
     bottom: { stamina: 0.1, nowMs: 900 },
     top: { stamina: 0.1, nowMs: 900, armExtractedL: true },
   },
+  {
+    name: "06_pass_drive",
+    bottom: { leftFootState: "UNLOCKED", rightFootState: "UNLOCKED" },
+    top: { passElapsedMs: 800, weightLateral: 0.6, weightForward: 0.6 },
+  },
+  {
+    name: "07_cut_strike",
+    bottom: { leftHand: { state: "GRIPPED", target: "COLLAR_R" }, gripStrengthL: 1 },
+    top: { cutElapsedRMs: 450 },
+  },
+  { name: "08_finish_triangle", bottom: {}, top: {}, finish: { kind: "TRIANGLE", tMs: 400 } },
+  { name: "09_finish_scissor_sweep", bottom: {}, top: {}, finish: { kind: "SCISSOR_SWEEP", tMs: 400 } },
+  { name: "10_finish_hip_bump", bottom: {}, top: {}, finish: { kind: "HIP_BUMP", tMs: 400 } },
+  { name: "11_finish_pass", bottom: {}, top: {}, finish: { kind: "PASS", tMs: 400 } },
 ];
 
 const outDir = path.join(import.meta.dirname, "preview");
@@ -194,8 +228,18 @@ for (const spec of SCENES) {
   const tIn = topBase(spec.top);
   for (let ms = 0; ms <= 2000; ms += 16) {
     const t = (bIn.nowMs ?? 0) + ms;
-    bottomRig.applyPose(computeBottomPose({ ...bIn, nowMs: t }), t);
-    topRig.applyPose(computeTopPose({ ...tIn, nowMs: t }), t);
+    let bPose: BodyPose;
+    let tPose: BodyPose;
+    if (spec.finish !== undefined) {
+      const fp = computeFinishPoses(spec.finish.kind, spec.finish.tMs);
+      bPose = fp.bottom;
+      tPose = fp.top;
+    } else {
+      bPose = computeBottomPose({ ...bIn, nowMs: t });
+      tPose = computeTopPose({ ...tIn, nowMs: t });
+    }
+    bottomRig.applyPose(bPose, t);
+    topRig.applyPose(tPose, t);
   }
 
   for (const [viewName, cam] of [["front", frontCamera], ["side", sideCamera]] as const) {
@@ -205,8 +249,10 @@ for (const spec of SCENES) {
       png.data[i * 4] = 21; png.data[i * 4 + 1] = 22; png.data[i * 4 + 2] = 26; png.data[i * 4 + 3] = 255;
     }
     drawGroundGrid(png.data);
-    drawRig(png.data, topRig, [201, 180, 138]);
-    drawRig(png.data, bottomRig, [90, 140, 255]);
+    const segments: Segment[] = [];
+    collectSegments(topRig, [201, 180, 138], segments);
+    collectSegments(bottomRig, [90, 140, 255], segments);
+    drawSegments(png.data, segments);
 
     const file = path.join(outDir, `${spec.name}_${viewName}.png`);
     fs.writeFileSync(file, PNG.sync.write(png));

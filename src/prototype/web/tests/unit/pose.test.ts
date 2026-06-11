@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computeBottomPose,
+  computeFinishPoses,
   computeTopPose,
   legDirections,
   solveLeg,
@@ -30,6 +31,7 @@ function bottomInput(overrides: Partial<BottomPoseInput> = {}): BottomPoseInput 
     hipLateral: 0,
     gripStrengthL: 0,
     gripStrengthR: 0,
+    windowOpen: false,
     ...overrides,
   };
 }
@@ -46,6 +48,10 @@ function topInput(overrides: Partial<TopPoseInput> = {}): TopPoseInput {
     weightLateral: 0,
     armExtractedL: false,
     armExtractedR: false,
+    passElapsedMs: null,
+    cutElapsedLMs: null,
+    cutElapsedRMs: null,
+    counterWindowOpen: false,
     ...overrides,
   };
 }
@@ -95,7 +101,7 @@ describe("computeBottomPose — arms", () => {
     const attacking = computeBottomPose(
       bottomInput({ leftHand: { state: "GRIPPED", target: "COLLAR_L" } }),
     );
-    expect(attacking.torsoPitch).toBeLessThan(idle.torsoPitch);
+    expect(attacking.torsoPitch).toBeGreaterThan(idle.torsoPitch);
   });
 });
 
@@ -168,7 +174,7 @@ describe("computeBottomPose — vitality", () => {
   it("fatigue drops the head back toward the mat", () => {
     const fresh = computeBottomPose(bottomInput({ stamina: 1 }));
     const spent = computeBottomPose(bottomInput({ stamina: 0 }));
-    expect(spent.headPitch).toBeGreaterThan(fresh.headPitch);
+    expect(spent.headPitch).toBeLessThan(fresh.headPitch);
   });
 
   it("breath oscillates over time and speeds up when spent", () => {
@@ -193,7 +199,7 @@ describe("computeTopPose", () => {
   it("posture break forward crumples the torso forward", () => {
     const upright = computeTopPose(topInput());
     const broken = computeTopPose(topInput({ postureBreakY: 0.8 }));
-    expect(broken.torsoPitch).toBeLessThan(upright.torsoPitch);
+    expect(broken.torsoPitch).toBeGreaterThan(upright.torsoPitch);
     expect(broken.pelvisZ).toBeGreaterThan(upright.pelvisZ);
   });
 
@@ -228,5 +234,88 @@ describe("computeTopPose", () => {
     const spent = computeTopPose(topInput({ stamina: 0, nowMs: 0 }));
     expect(spent.pelvisY).toBeLessThan(fresh.pelvisY);
     expect(spent.headPitch).toBeGreaterThan(fresh.headPitch);
+  });
+});
+
+describe("computeTopPose — pass and cut animation", () => {
+  it("a pass drive drops the torso, surges the hips forward, and steps the lead knee up", () => {
+    const idle = computeTopPose(topInput());
+    const driving = computeTopPose(topInput({ passElapsedMs: 800, weightLateral: 0.5 }));
+    expect(driving.torsoPitch).toBeGreaterThan(idle.torsoPitch);
+    expect(driving.pelvisZ).toBeGreaterThan(idle.pelvisZ);
+    expect(driving.pelvisY).toBeLessThan(idle.pelvisY);
+    // weightLateral ≥ 0 → right leg leads (steps up = more hip flexion).
+    expect(driving.legR.hipPitch).toBeLessThan(driving.legL.hipPitch);
+  });
+
+  it("a grip cut animates only the cutting arm through windup and strike", () => {
+    const idle = computeTopPose(topInput());
+    const windup = computeTopPose(topInput({ cutElapsedRMs: 200 }));
+    const strike = computeTopPose(topInput({ cutElapsedRMs: 600 }));
+    expect(windup.armL).toEqual(idle.armL);
+    // Windup raises the arm out; the strike then swats across (yaw flips in).
+    expect(windup.armR.shoulderRoll).toBeGreaterThan(idle.armR.shoulderRoll);
+    expect(strike.armR.shoulderYaw).toBeLessThan(windup.armR.shoulderYaw);
+  });
+});
+
+describe("window anticipation", () => {
+  it("an open judgment window coils the attacker (hips load, torso curls)", () => {
+    const calm = computeBottomPose(bottomInput());
+    const coiled = computeBottomPose(bottomInput({ windowOpen: true }));
+    expect(coiled.pelvisY).toBeGreaterThan(calm.pelvisY);
+    expect(coiled.torsoPitch).toBeGreaterThan(calm.torsoPitch);
+  });
+
+  it("an open counter window braces the defender upright", () => {
+    const calm = computeTopPose(topInput());
+    const braced = computeTopPose(topInput({ counterWindowOpen: true }));
+    expect(braced.torsoPitch).toBeLessThan(calm.torsoPitch);
+  });
+});
+
+describe("computeFinishPoses", () => {
+  it("TRIANGLE locks both legs high with the shins crossing the neck line", () => {
+    const { bottom, top } = computeFinishPoses("TRIANGLE", 0);
+    const { thigh, shin } = legDirections(bottom.legR);
+    expect(thigh[2]).toBeGreaterThan(0.6); // thigh steeply up
+    expect(shin[0]).toBeLessThan(-0.5); // shin hard across
+    expect(top.torsoPitch).toBeGreaterThan(0.6); // defender folded
+  });
+
+  it("SCISSOR_SWEEP topples the defender onto his side", () => {
+    const { top } = computeFinishPoses("SCISSOR_SWEEP", 0);
+    expect(Math.abs(top.pelvisRoll)).toBeGreaterThan(1);
+    expect(top.pelvisY).toBeLessThan(0.35);
+  });
+
+  it("FLOWER_SWEEP mirrors the topple direction", () => {
+    const scissor = computeFinishPoses("SCISSOR_SWEEP", 0).top;
+    const flower = computeFinishPoses("FLOWER_SWEEP", 0).top;
+    expect(Math.sign(flower.pelvisRoll)).toBe(-Math.sign(scissor.pelvisRoll));
+    expect(Math.sign(flower.pelvisX)).toBe(-Math.sign(scissor.pelvisX));
+  });
+
+  it("HIP_BUMP sits the attacker up and tips the defender backward", () => {
+    const { bottom, top } = computeFinishPoses("HIP_BUMP", 0);
+    expect(bottom.torsoPitch).toBeGreaterThan(0.9); // big sit-up
+    expect(top.torsoPitch).toBeLessThan(-0.3); // knocked back
+  });
+
+  it("PASS settles the defender beside the swept legs", () => {
+    const { bottom, top } = computeFinishPoses("PASS", 0);
+    expect(Math.abs(top.pelvisX)).toBeGreaterThan(0.3); // off to the side
+    // Both attacker legs swept the same way: world-side = −authored for
+    // the mirrored left leg, so the signs must oppose.
+    const right = legDirections(bottom.legR).thigh;
+    const left = legDirections(bottom.legL).thigh;
+    expect(Math.sign(left[0])).toBe(-Math.sign(right[0]));
+  });
+
+  it("submission tableaux keep breathing (poses move over time)", () => {
+    const a = computeFinishPoses("CROSS_COLLAR", 0);
+    const b = computeFinishPoses("CROSS_COLLAR", 700);
+    expect(a.bottom.breath).not.toBeCloseTo(b.bottom.breath, 5);
+    expect(a.bottom.armL.elbowBend).not.toBeCloseTo(b.bottom.armL.elbowBend, 5);
   });
 });
