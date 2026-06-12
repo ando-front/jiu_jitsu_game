@@ -418,6 +418,12 @@ export function computeBottomPose(input: BottomPoseInput): BodyPose {
   // Breathing speeds up as stamina drains (§5.4's "呼吸が重い" zone).
   const breathHz = 0.28 + fatigue * 0.55;
   const breath = Math.sin((input.nowMs / 1000) * TWO_PI * breathHz);
+  // Idle micro-sway: two incommensurate sines ≈ a living body constantly
+  // re-balancing. Fatigue makes the adjustments bigger and sloppier.
+  const swayAmp = 1 + fatigue * 1.2;
+  const sway = (Math.sin((input.nowMs / 1000) * TWO_PI * 0.31 + 1.3) * 0.6 +
+    Math.sin((input.nowMs / 1000) * TWO_PI * 0.47) * 0.4) * swayAmp;
+  const sway2 = Math.sin((input.nowMs / 1000) * TWO_PI * 0.23 + 4.0) * swayAmp;
 
   // Sit-up crunch when actively attacking the collar / posture-break line.
   const sitUp = isActiveHigh(input.leftHand) || isActiveHigh(input.rightHand) ? 0.22 : 0;
@@ -427,9 +433,9 @@ export function computeBottomPose(input: BottomPoseInput): BodyPose {
   const coil = input.windowOpen ? 1 : 0;
 
   return {
-    pelvisX: input.hipLateral * 0.20,
+    pelvisX: input.hipLateral * 0.20 + sway * 0.012,
     pelvisY: 0.26 + (legsLocked ? 0.05 : 0) + Math.abs(input.hipPush) * 0.03 + coil * 0.04,
-    pelvisZ: input.hipPush * 0.30,
+    pelvisZ: input.hipPush * 0.30 + sway2 * 0.008,
     // Supine: −π/2 lays the body flat with the chest facing up and (after
     // the rig's yaw flip) the head toward the camera; the small addition
     // keeps the shoulders just off the mat.
@@ -439,8 +445,8 @@ export function computeBottomPose(input: BottomPoseInput): BodyPose {
     // Positive pitch curls the chest up toward the opponent (supine front
     // = world up); fatigue sags it back toward the mat.
     torsoPitch: 0.20 + sitUp * 0.7 + coil * 0.10 + breath * 0.04 - fatigue * 0.15,
-    torsoYaw: input.hipAngle * 0.35,
-    torsoRoll: input.hipLateral * 0.18,
+    torsoYaw: input.hipAngle * 0.35 + sway2 * 0.02,
+    torsoRoll: input.hipLateral * 0.18 + sway * 0.015,
     torsoTremor: 0,
     headPitch: 0.45 + sitUp * 0.4 - fatigue * 0.35,
     headYaw: input.hipAngle * 0.3,
@@ -457,6 +463,11 @@ export function computeTopPose(input: TopPoseInput): BodyPose {
   const breathHz = 0.28 + fatigue * 0.55;
   // Phase-offset so the two bodies never breathe in lockstep.
   const breath = Math.sin((input.nowMs / 1000) * TWO_PI * breathHz + Math.PI * 0.6);
+  // Idle micro-sway (phase-offset from the bottom player's).
+  const swayAmp = 1 + fatigue * 1.2;
+  const sway = (Math.sin((input.nowMs / 1000) * TWO_PI * 0.29 + 3.1) * 0.6 +
+    Math.sin((input.nowMs / 1000) * TWO_PI * 0.43 + 0.7) * 0.4) * swayAmp;
+  const sway2 = Math.sin((input.nowMs / 1000) * TWO_PI * 0.21 + 1.9) * swayAmp;
 
   const pbX = input.postureBreakX;
   const pbY = input.postureBreakY;
@@ -498,20 +509,20 @@ export function computeTopPose(input: TopPoseInput): BodyPose {
   const brace = input.counterWindowOpen ? 1 : 0;
 
   return {
-    pelvisX: pbX * 0.25 + input.weightLateral * 0.22 + (driveRight ? 1 : -1) * passT * 0.10,
+    pelvisX: pbX * 0.25 + input.weightLateral * 0.22 + (driveRight ? 1 : -1) * passT * 0.10 + sway * 0.014,
     pelvisY: 0.50 - fatigue * 0.04 - pbMag * 0.06 - passT * 0.06 + brace * 0.02,
-    pelvisZ: pbY * 0.30 + input.weightForward * 0.22 + passT * (0.18 + passSurge),
+    pelvisZ: pbY * 0.30 + input.weightForward * 0.22 + passT * (0.18 + passSurge) + sway2 * 0.010,
     pelvisPitch: 0,
     pelvisYaw: 0,
-    pelvisRoll: input.weightLateral * 0.10,
+    pelvisRoll: input.weightLateral * 0.10 + sway * 0.018,
     // Combat-base hunch (constant +0.10 forward), then posture break
     // crumples the torso forward / sideways; the pass drive and fatigue
     // round it further, while a counter brace straightens it.
     torsoPitch:
       0.10 + pbY * 0.55 + input.weightForward * 0.10 + fatigue * 0.12 + breath * 0.03 +
       passT * 0.30 - brace * 0.08,
-    torsoYaw: pbX * 0.20,
-    torsoRoll: pbX * 0.45,
+    torsoYaw: pbX * 0.20 + sway2 * 0.025,
+    torsoRoll: pbX * 0.45 + sway * 0.02,
     torsoTremor: strain + passT * 0.15,
     // Eyes stay on the opponent below; exhaustion drops the chin further.
     headPitch: 0.45 + fatigue * 0.25 + Math.max(0, pbY) * 0.20,
@@ -743,5 +754,392 @@ export function computeFinishPoses(kind: FinishKind, tMs: number): FinishPoses {
     }
   }
 
+  return { bottom, top };
+}
+
+// -----------------------------------------------------------------------------
+// Contact IK — the layer that makes hands actually land on the opponent.
+//
+// Forward kinematics (computeBodyFrames) reconstructs world-space joint
+// positions for a posed rig: torso frame, shoulders, hands, knees, biceps,
+// head. Zone anchors map each grip/base zone onto the *current* opponent
+// body, and a two-bone arm solver plants the reaching hand there. The result:
+// grips visibly connect, and stay connected while the opponent crumples,
+// because the anchor moves with their pose.
+//
+// computeScenePoses orchestrates the (acyclic) dependency order:
+//   1. pose both bodies with state-table arms,
+//   2. defender arms IK → anchors on the attacker's torso-level frame,
+//   3. attacker arms IK → anchors on the *final* defender frame (so sleeve
+//      grips track the defender's hands),
+//   4. heads track the opponent's head.
+
+// 3×3 rotation matrices, row-major. Transpose = inverse for pure rotations.
+type M3 = readonly [number, number, number, number, number, number, number, number, number];
+
+const M3_ID: M3 = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+
+function m3Mul(a: M3, b: M3): M3 {
+  const r = new Array<number>(9);
+  for (let i = 0; i < 3; i += 1) {
+    for (let j = 0; j < 3; j += 1) {
+      r[i * 3 + j] =
+        a[i * 3]! * b[j]! + a[i * 3 + 1]! * b[3 + j]! + a[i * 3 + 2]! * b[6 + j]!;
+    }
+  }
+  return r as unknown as M3;
+}
+
+function m3MulV(m: M3, v: V3): V3 {
+  return [
+    m[0] * v[0] + m[1] * v[1] + m[2] * v[2],
+    m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
+    m[6] * v[0] + m[7] * v[1] + m[8] * v[2],
+  ];
+}
+
+function m3T(m: M3): M3 {
+  return [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]];
+}
+
+function m3RotX(t: number): M3 {
+  const c = Math.cos(t), s = Math.sin(t);
+  return [1, 0, 0, 0, c, -s, 0, s, c];
+}
+
+function m3RotY(t: number): M3 {
+  const c = Math.cos(t), s = Math.sin(t);
+  return [c, 0, s, 0, 1, 0, -s, 0, c];
+}
+
+function m3RotZ(t: number): M3 {
+  const c = Math.cos(t), s = Math.sin(t);
+  return [c, -s, 0, s, c, 0, 0, 0, 1];
+}
+
+// three.js default Euler order "XYZ": R = Rx·Ry·Rz (pelvis / torso groups).
+function m3EulerXYZ(x: number, y: number, z: number): M3 {
+  return m3Mul(m3RotX(x), m3Mul(m3RotY(y), m3RotZ(z)));
+}
+
+// Rig joint groups with order "YXZ": R = Ry·Rx·Rz (hips, shoulders).
+function m3EulerYXZ(x: number, y: number, z: number): M3 {
+  return m3Mul(m3RotY(y), m3Mul(m3RotX(x), m3RotZ(z)));
+}
+
+function v3add(a: V3, b: V3): V3 {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+}
+
+function v3sub(a: V3, b: V3): V3 {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+function v3scale(a: V3, s: number): V3 {
+  return [a[0] * s, a[1] * s, a[2] * s];
+}
+
+function v3len(a: V3): number {
+  return Math.hypot(a[0], a[1], a[2]);
+}
+
+// Skeleton dimensions, single-sourced here and consumed by blockman.ts so
+// the FK below never drifts from the rendered rig.
+export const RIG_DIMS = Object.freeze({
+  pelvisToTorso: 0.10,
+  shoulderX: 0.24,
+  shoulderY: 0.44,
+  headY: 0.56,
+  headCenterY: 0.12,
+  upperArm: 0.28, // shoulder pivot → elbow pivot
+  foreArm: 0.27,  // elbow pivot → hand centre
+  hipX: 0.11,
+  hipY: -0.05,
+  thigh: 0.38,    // hip pivot → knee pivot
+  shin: 0.36,     // knee pivot → ankle
+});
+
+// Where each rig's root sits in the world. yawPi rigs are turned 180° (the
+// supine player) and mirror their pelvis x/z offsets in blockman.ts — the
+// FK accounts for both so positions here are true world space.
+export type RigPlacement = Readonly<{ origin: V3; yawPi: boolean }>;
+export const BOTTOM_PLACEMENT: RigPlacement = Object.freeze({ origin: [0, 0, 0] as V3, yawPi: true });
+export const TOP_PLACEMENT: RigPlacement = Object.freeze({ origin: [0, 0, -0.5] as V3, yawPi: false });
+
+export type BodyFrames = Readonly<{
+  pelvisPos: V3;
+  pelvisRot: M3;
+  torsoPos: V3;
+  torsoRot: M3;
+  headPos: V3;
+  shoulderL: V3;
+  shoulderR: V3;
+  handL: V3;
+  handR: V3;
+  bicepL: V3;
+  bicepR: V3;
+  kneeL: V3;
+  kneeR: V3;
+}>;
+
+export function computeBodyFrames(pose: BodyPose, place: RigPlacement): BodyFrames {
+  const root = place.yawPi ? m3RotY(Math.PI) : M3_ID;
+  // blockman mirrors pelvis x/z for yawPi rigs, and the root rotation
+  // un-mirrors them — net effect: pose pelvis offsets are world-axis.
+  const pelvisPos = v3add(place.origin, [pose.pelvisX, pose.pelvisY, pose.pelvisZ]);
+  const pelvisRot = m3Mul(root, m3EulerXYZ(pose.pelvisPitch, pose.pelvisYaw, pose.pelvisRoll));
+  const torsoPos = v3add(pelvisPos, m3MulV(pelvisRot, [0, RIG_DIMS.pelvisToTorso, 0]));
+  const torsoRot = m3Mul(pelvisRot, m3EulerXYZ(pose.torsoPitch, pose.torsoYaw, pose.torsoRoll));
+  const headPos = v3add(torsoPos, m3MulV(torsoRot, [0, RIG_DIMS.headY + RIG_DIMS.headCenterY, 0]));
+
+  const armPoint = (arm: ArmPose, sideSign: number): { shoulder: V3; bicep: V3; hand: V3 } => {
+    const shoulder = v3add(
+      torsoPos,
+      m3MulV(torsoRot, [RIG_DIMS.shoulderX * sideSign, RIG_DIMS.shoulderY, 0]),
+    );
+    const armRot = m3Mul(
+      torsoRot,
+      m3EulerYXZ(arm.shoulderPitch, arm.shoulderYaw * sideSign, arm.shoulderRoll * sideSign),
+    );
+    const bicep = v3add(shoulder, m3MulV(armRot, [0, -RIG_DIMS.upperArm / 2, 0]));
+    const elbowPos = v3add(shoulder, m3MulV(armRot, [0, -RIG_DIMS.upperArm, 0]));
+    const foreRot = m3Mul(armRot, m3RotX(-arm.elbowBend));
+    const hand = v3add(elbowPos, m3MulV(foreRot, [0, -RIG_DIMS.foreArm, 0]));
+    return { shoulder, bicep, hand };
+  };
+  const aL = armPoint(pose.armL, -1);
+  const aR = armPoint(pose.armR, 1);
+
+  const kneePoint = (leg: LegPose, sideSign: number): V3 => {
+    const hip = v3add(
+      pelvisPos,
+      m3MulV(pelvisRot, [RIG_DIMS.hipX * sideSign, RIG_DIMS.hipY, 0]),
+    );
+    const legRot = m3Mul(
+      pelvisRot,
+      m3EulerYXZ(leg.hipPitch, leg.hipYaw * sideSign, leg.hipRoll * sideSign),
+    );
+    return v3add(hip, m3MulV(legRot, [0, -RIG_DIMS.thigh, 0]));
+  };
+
+  return {
+    pelvisPos,
+    pelvisRot,
+    torsoPos,
+    torsoRot,
+    headPos,
+    shoulderL: aL.shoulder,
+    shoulderR: aR.shoulder,
+    handL: aL.hand,
+    handR: aR.hand,
+    bicepL: aL.bicep,
+    bicepR: aR.bicep,
+    kneeL: kneePoint(pose.legL, -1),
+    kneeR: kneePoint(pose.legR, 1),
+  };
+}
+
+// World-space anchor for an attacker grip zone on the defender's body.
+export function gripZoneAnchor(zone: string, opp: BodyFrames): V3 | null {
+  switch (zone) {
+    case "COLLAR_L":
+      return v3add(opp.torsoPos, m3MulV(opp.torsoRot, [-0.10, 0.50, 0.08]));
+    case "COLLAR_R":
+      return v3add(opp.torsoPos, m3MulV(opp.torsoRot, [0.10, 0.50, 0.08]));
+    case "SLEEVE_L":
+    case "WRIST_L":
+      return opp.handL;
+    case "SLEEVE_R":
+    case "WRIST_R":
+      return opp.handR;
+    case "BELT":
+      return v3add(opp.pelvisPos, m3MulV(opp.pelvisRot, [0, 0.02, 0.12]));
+    case "POSTURE_BREAK":
+      return v3add(opp.torsoPos, m3MulV(opp.torsoRot, [0, 0.40, 0.10]));
+    default:
+      return null;
+  }
+}
+
+// World-space anchor for a defender base zone on the attacker's body.
+export function baseZoneAnchor(zone: string, opp: BodyFrames): V3 | null {
+  switch (zone) {
+    case "CHEST":
+      return v3add(opp.torsoPos, m3MulV(opp.torsoRot, [0, 0.30, 0.14]));
+    case "HIP":
+      return v3add(opp.pelvisPos, m3MulV(opp.pelvisRot, [0, 0, 0.12]));
+    case "KNEE_L":
+      return opp.kneeL;
+    case "KNEE_R":
+      return opp.kneeR;
+    case "BICEP_L":
+      return opp.bicepL;
+    case "BICEP_R":
+      return opp.bicepR;
+    default:
+      return null;
+  }
+}
+
+// Two-bone arm IK. Plants the hand centre on `targetWorld` (clamped to the
+// reachable sphere — an out-of-range anchor reads as a full-extension
+// strain). The elbow settles toward a down-and-out pole, and the solution
+// comes back as the same YXZ shoulder Euler + elbow bend the rig consumes.
+function solveArmIK(
+  targetWorld: V3,
+  shoulderWorld: V3,
+  torsoRot: M3,
+  sideSign: number,
+  baseTremor: number,
+): ArmPose {
+  const a = RIG_DIMS.upperArm;
+  const b = RIG_DIMS.foreArm;
+  // Target in the shoulder's parent (torso) frame.
+  const tRaw = m3MulV(m3T(torsoRot), v3sub(targetWorld, shoulderWorld));
+  const dRaw = v3len(tRaw);
+  const d = Math.max(0.10, Math.min(a + b - 0.01, dRaw));
+  const dir = dRaw < 1e-6 ? ([0, -1, 0] as V3) : v3scale(tRaw, 1 / dRaw);
+
+  const elbowBend = Math.PI - Math.acos(clampUnit((a * a + b * b - d * d) / (2 * a * b)));
+  const alpha = Math.acos(clampUnit((a * a + d * d - b * b) / (2 * a * d)));
+
+  // Elbow pole: down along the torso and slightly out/back, mirrored per side.
+  const pole: V3 = [0.45 * sideSign, -0.8, -0.35];
+  let axis = v3cross(dir, pole);
+  if (v3len(axis) < 1e-5) axis = v3cross(dir, [1, 0, 0] as const);
+  axis = v3norm(axis);
+  // Rotate `dir` by α about `axis` (Rodrigues, axis ⊥ dir) → upper-arm dir.
+  const u = v3add(
+    v3scale(dir, Math.cos(alpha)),
+    v3scale(v3cross(axis, dir), Math.sin(alpha)),
+  );
+  // Forearm direction follows from the (clamped) target.
+  const f = v3norm(v3sub(v3scale(dir, d), v3scale(u, a)));
+
+  // Build the shoulder rotation: local −y → u, and the elbow hinge (+x with
+  // a *negative* rig rotation) demands xAxis = normalize(f × u).
+  let xAxis = v3cross(f, u);
+  if (v3len(xAxis) < 1e-5) xAxis = v3cross(u, [0, 0, 1] as const);
+  xAxis = v3norm(xAxis);
+  const yAxis: V3 = [-u[0], -u[1], -u[2]];
+  const zAxis = v3cross(xAxis, yAxis);
+
+  const m13 = zAxis[0], m23 = zAxis[1], m33 = zAxis[2];
+  const m21 = xAxis[1], m22 = yAxis[1];
+  const m11 = xAxis[0], m31 = xAxis[2];
+  const pitch = Math.asin(-clampUnit(m23));
+  let yaw: number;
+  let roll: number;
+  if (Math.abs(m23) < 0.9999) {
+    yaw = Math.atan2(m13, m33);
+    roll = Math.atan2(m21, m22);
+  } else {
+    yaw = Math.atan2(-m31, m11);
+    roll = 0;
+  }
+  return {
+    shoulderPitch: pitch,
+    // The rig multiplies yaw/roll by sideSign; de-mirror so it round-trips.
+    shoulderYaw: yaw * sideSign,
+    shoulderRoll: roll * sideSign,
+    elbowBend,
+    tremor: baseTremor,
+  };
+}
+
+// Hand states whose arm should be IK-planted on the live anchor.
+function ikEngaged(state: string): boolean {
+  return state === "REACHING" || state === "CONTACT" || state === "GRIPPED";
+}
+
+function ikArm(
+  hand: LimbSnapshot,
+  cannedArm: ArmPose,
+  anchorTable: "grip" | "base",
+  oppFrames: BodyFrames,
+  ownFrames: BodyFrames,
+  side: "L" | "R",
+): ArmPose {
+  if (!ikEngaged(hand.state) || hand.target === null) return cannedArm;
+  const anchor =
+    anchorTable === "grip"
+      ? gripZoneAnchor(hand.target, oppFrames)
+      : baseZoneAnchor(hand.target, oppFrames);
+  if (anchor === null) return cannedArm;
+  const sideSign = side === "L" ? -1 : 1;
+  const shoulder = side === "L" ? ownFrames.shoulderL : ownFrames.shoulderR;
+  // GRIPPED: drag the grip a few cm toward one's own chest — reads as pull.
+  let target = anchor;
+  if (hand.state === "GRIPPED") {
+    const chest = v3add(ownFrames.torsoPos, m3MulV(ownFrames.torsoRot, [0, 0.3, 0.1]));
+    const toChest = v3sub(chest, anchor);
+    const len = v3len(toChest);
+    if (len > 1e-6) target = v3add(anchor, v3scale(toChest, Math.min(0.06, len) / len));
+  }
+  return solveArmIK(target, shoulder, ownFrames.torsoRot, sideSign, cannedArm.tremor);
+}
+
+// Gaze: aim the head's face (+z when neutral) at the opponent's head.
+// Returns clamped head pitch/yaw in the torso frame; blended on top of the
+// pose's base head angles by computeScenePoses.
+function lookAt(ownPose: BodyPose, ownFrames: BodyFrames, targetWorld: V3): { pitch: number; yaw: number } {
+  const headOrigin = v3add(ownFrames.torsoPos, m3MulV(ownFrames.torsoRot, [0, RIG_DIMS.headY, 0]));
+  const tLocal = v3norm(m3MulV(m3T(ownFrames.torsoRot), v3sub(targetWorld, headOrigin)));
+  // Face = Rx(p)·Ry(yw)·ẑ = (sin yw, −cos yw·sin p, cos yw·cos p).
+  const yaw = Math.atan2(tLocal[0], Math.max(0.15, tLocal[2]));
+  const pitch = -Math.atan2(tLocal[1], Math.hypot(tLocal[0], tLocal[2]));
+  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+  return {
+    pitch: clamp(ownPose.headPitch * 0.3 + pitch * 0.7, -0.6, 1.1),
+    yaw: clamp(ownPose.headYaw * 0.3 + yaw * 0.7, -0.75, 0.75),
+  };
+}
+
+export type ScenePoses = Readonly<{ bottom: BodyPose; top: BodyPose }>;
+
+export function computeScenePoses(
+  bottomIn: BottomPoseInput,
+  topIn: TopPoseInput,
+): ScenePoses {
+  const b0 = computeBottomPose(bottomIn);
+  const t0 = computeTopPose(topIn);
+
+  // 1. Defender hands plant on the attacker's torso-level anchors. (Cut
+  //    chops and extracted arms already replaced the canned pose in
+  //    computeTopPose and must keep priority over IK.)
+  const bFrames0 = computeBodyFrames(b0, BOTTOM_PLACEMENT);
+  const tFrames0 = computeBodyFrames(t0, TOP_PLACEMENT);
+  const topArmL =
+    topIn.cutElapsedLMs !== null || topIn.armExtractedL
+      ? t0.armL
+      : ikArm(topIn.leftHand, t0.armL, "base", bFrames0, tFrames0, "L");
+  const topArmR =
+    topIn.cutElapsedRMs !== null || topIn.armExtractedR
+      ? t0.armR
+      : ikArm(topIn.rightHand, t0.armR, "base", bFrames0, tFrames0, "R");
+  const topMid: BodyPose = { ...t0, armL: topArmL, armR: topArmR };
+
+  // 2. Attacker hands plant on the *final* defender frame, so sleeve/wrist
+  //    grips track the defender's actual hands.
+  const tFrames = computeBodyFrames(topMid, TOP_PLACEMENT);
+  const bottomArmL = ikArm(bottomIn.leftHand, b0.armL, "grip", tFrames, bFrames0, "L");
+  const bottomArmR = ikArm(bottomIn.rightHand, b0.armR, "grip", tFrames, bFrames0, "R");
+
+  // 3. Heads track the opponent.
+  const bGaze = lookAt(b0, bFrames0, tFrames.headPos);
+  const tGaze = lookAt(topMid, tFrames, bFrames0.headPos);
+
+  const bottom: BodyPose = {
+    ...b0,
+    armL: bottomArmL,
+    armR: bottomArmR,
+    headPitch: bGaze.pitch,
+    headYaw: bGaze.yaw,
+  };
+  const top: BodyPose = {
+    ...topMid,
+    headPitch: tGaze.pitch,
+    headYaw: tGaze.yaw,
+  };
   return { bottom, top };
 }
