@@ -33,9 +33,8 @@ import { breakBucket } from "./state/posture_break.js";
 import { advance, FIXED_STEP_MS, type FixedStepState } from "./sim/fixed_step.js";
 import { createScene } from "./scene/blockman.js";
 import {
-  computeBottomPose,
   computeFinishPoses,
-  computeTopPose,
+  computeScenePoses,
   type FinishKind,
 } from "./scene/pose.js";
 
@@ -738,12 +737,18 @@ function frame(now: number) {
     switch (ev.kind) {
       case "GRIPPED":
         scene3d.pulseShake("top", 0.04, 120);
+        // Yanked toward the new grip.
+        scene3d.top.impulse("TORSO_JERK");
         break;
       case "PARRIED":
         scene3d.pulseShake("bottom", 0.06, 160);
+        // The parried arm gets knocked wide.
+        scene3d.bottom.impulse(ev.side === "L" ? "ARM_L_FLUNG" : "ARM_R_FLUNG");
         break;
       case "GRIP_BROKEN":
         scene3d.pulseShake("bottom", 0.05, 140);
+        // The freed arm snaps back in.
+        scene3d.bottom.impulse(ev.side === "L" ? "ARM_L_RECOIL" : "ARM_R_RECOIL");
         break;
       case "TECHNIQUE_CONFIRMED":
         scene3d.pulseFlash(0xffd98c, 220);
@@ -775,6 +780,8 @@ function frame(now: number) {
         break;
       case "PASS_STARTED":
         scene3d.pulseFlash(0x9ec9ff, 140);
+        // Pass pressure staggers the guard player.
+        scene3d.bottom.impulse("TORSO_JOLT");
         break;
       case "PASS_SUCCEEDED":
         scene3d.pulseFlash(0x9ec9ff, 480);
@@ -875,7 +882,7 @@ function applyToScene(g: GameState) {
     }
   }
 
-  const bottomPose = computeBottomPose({
+  const poses = computeScenePoses({
     nowMs: g.nowMs,
     stamina: g.bottom.stamina,
     guard: g.guard,
@@ -889,8 +896,7 @@ function applyToScene(g: GameState) {
     gripStrengthL: intent.grip.l_grip_strength,
     gripStrengthR: intent.grip.r_grip_strength,
     windowOpen: g.judgmentWindow.state === "OPEN" || g.judgmentWindow.state === "OPENING",
-  });
-  const topPose = computeTopPose({
+  }, {
     nowMs: g.nowMs,
     stamina: g.top.stamina,
     leftHand: { state: g.top.leftHand.state, target: g.top.leftHand.target },
@@ -909,7 +915,7 @@ function applyToScene(g: GameState) {
       g.cutAttempts.right.kind === "IN_PROGRESS" ? g.nowMs - g.cutAttempts.right.startedMs : null,
     counterWindowOpen: g.counterWindow.state === "OPEN" || g.counterWindow.state === "OPENING",
   });
-  scene3d.updateMotion(bottomPose, topPose, g.nowMs);
+  scene3d.updateMotion(poses.bottom, poses.top, g.nowMs);
   scene3d.top.setBreakBucket(breakBucket(pb));
   applySceneOverlays(g);
 }

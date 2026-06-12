@@ -14,9 +14,8 @@ import * as THREE from "three";
 import { PNG } from "pngjs";
 import { buildBlockman, type BlockmanRig } from "../src/scene/blockman.js";
 import {
-  computeBottomPose,
   computeFinishPoses,
-  computeTopPose,
+  computeScenePoses,
   type BodyPose,
   type BottomPoseInput,
   type FinishKind,
@@ -235,8 +234,9 @@ for (const spec of SCENES) {
       bPose = fp.bottom;
       tPose = fp.top;
     } else {
-      bPose = computeBottomPose({ ...bIn, nowMs: t });
-      tPose = computeTopPose({ ...tIn, nowMs: t });
+      const sp = computeScenePoses({ ...bIn, nowMs: t }, { ...tIn, nowMs: t });
+      bPose = sp.bottom;
+      tPose = sp.top;
     }
     bottomRig.applyPose(bPose, t);
     topRig.applyPose(tPose, t);

@@ -9,6 +9,7 @@
 // breaks crumple, locked guards squeeze, and both bodies breathe.
 
 import * as THREE from "three";
+import { RIG_DIMS, TOP_PLACEMENT } from "./pose.js";
 import type { ArmPose, BodyPose, LegPose } from "./pose.js";
 
 export interface Scene3D {
@@ -39,9 +40,21 @@ export interface Scene3D {
 
 export type InitiativeTint = "Bottom" | "Top" | "Neutral";
 
+// Named impact reactions. Each kicks velocity into specific joint springs,
+// so the rig visibly flinches and then settles — far more physical than a
+// positional shake. Fire-and-forget from SimEvents.
+export type ImpulseKind =
+  | "ARM_L_FLUNG"   // parried: arm knocked outward
+  | "ARM_R_FLUNG"
+  | "ARM_L_RECOIL"  // grip broken / cut: arm snaps back in
+  | "ARM_R_RECOIL"
+  | "TORSO_JERK"    // yanked toward the opponent (grip established)
+  | "TORSO_JOLT";   // hit/staggered (pass pressure, impacts)
+
 export interface BlockmanRig {
   root: THREE.Group;
   body: THREE.Mesh;
+  impulse(kind: ImpulseKind): void;
   setBreakBucket(bucket: number): void;
   // §D3 — colour limbs by FSM state so input → state changes are visible
   // on top of the joint animation. State enum strings come from
@@ -122,7 +135,7 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
   // player — and kneels close enough that the locked guard legs wrap its
   // waist with the ankles crossing behind its back.
   const top = buildBlockman(new THREE.Color(0xc9b48a), false);
-  top.root.position.set(0, 0, -0.5);
+  top.root.position.set(...TOP_PLACEMENT.origin);
   scene.add(top.root);
 
   // --- Vignette overlay ---
@@ -313,7 +326,7 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
   pelvis.add(pelvisMesh);
 
   const torsoGroup = new THREE.Group();
-  torsoGroup.position.set(0, 0.10, 0);
+  torsoGroup.position.set(0, RIG_DIMS.pelvisToTorso, 0);
   pelvis.add(torsoGroup);
 
   const torsoMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.17, 0.30, 4, 12), material);
@@ -321,14 +334,14 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
   torsoGroup.add(torsoMesh);
 
   const headGroup = new THREE.Group();
-  headGroup.position.set(0, 0.56, 0);
+  headGroup.position.set(0, RIG_DIMS.headY, 0);
   torsoGroup.add(headGroup);
   const headMat = new THREE.MeshStandardMaterial({
     color: baseColor.clone().lerp(new THREE.Color(0xffffff), 0.25),
     roughness: 0.55,
   });
   const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.125, 16, 12), headMat);
-  headMesh.position.y = 0.12;
+  headMesh.position.y = RIG_DIMS.headCenterY;
   headGroup.add(headMesh);
 
   // Limbs need their own materials so we can tint them per FSM state
@@ -342,15 +355,18 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
   type ArmJoints = { shoulder: THREE.Group; elbow: THREE.Group };
   function buildArm(sideX: number, mat: THREE.Material): ArmJoints {
     const shoulder = new THREE.Group();
-    shoulder.position.set(sideX, 0.44, 0);
+    shoulder.position.set(sideX, RIG_DIMS.shoulderY, 0);
+    // YXZ to match pose.ts's arm IK decomposition (yaw aims the bend
+    // plane, pitch raises the arm within it).
+    shoulder.rotation.order = "YXZ";
     torsoGroup.add(shoulder);
     shoulder.add(limbCapsule(0.055, 0.17, mat));
     const elbow = new THREE.Group();
-    elbow.position.set(0, -0.28, 0);
+    elbow.position.set(0, -RIG_DIMS.upperArm, 0);
     shoulder.add(elbow);
     elbow.add(limbCapsule(0.05, 0.15, mat));
     const hand = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), mat);
-    hand.position.y = -0.27;
+    hand.position.y = -RIG_DIMS.foreArm;
     elbow.add(hand);
     return { shoulder, elbow };
   }
@@ -358,14 +374,14 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
   type LegJoints = { hip: THREE.Group; knee: THREE.Group };
   function buildLeg(sideX: number, mat: THREE.Material): LegJoints {
     const hip = new THREE.Group();
-    hip.position.set(sideX, -0.05, 0);
+    hip.position.set(sideX, RIG_DIMS.hipY, 0);
     // YXZ: yaw turns the knee's fold plane first, then pitch lifts the
     // thigh within it — matches pose.ts's solveLeg decomposition.
     hip.rotation.order = "YXZ";
     pelvis.add(hip);
     hip.add(limbCapsule(0.08, 0.22, mat));
     const knee = new THREE.Group();
-    knee.position.set(0, -0.38, 0);
+    knee.position.set(0, -RIG_DIMS.thigh, 0);
     hip.add(knee);
     knee.add(limbCapsule(0.065, 0.21, mat));
     const foot = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.06, 0.18), mat);
@@ -374,10 +390,10 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
     return { hip, knee };
   }
 
-  const armL = buildArm(-0.24, armLMat);
-  const armR = buildArm(0.24, armRMat);
-  const legL = buildLeg(-0.11, legLMat);
-  const legR = buildLeg(0.11, legRMat);
+  const armL = buildArm(-RIG_DIMS.shoulderX, armLMat);
+  const armR = buildArm(RIG_DIMS.shoulderX, armRMat);
+  const legL = buildLeg(-RIG_DIMS.hipX, legLMat);
+  const legR = buildLeg(RIG_DIMS.hipX, legRMat);
 
   const breakTints: readonly THREE.Color[] = [
     baseColor.clone(),
@@ -461,10 +477,47 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
     joints.knee.rotation.x = drive(`${prefix}.kb`, pose.kneeBend, dtS, TUNE.leg);
   }
 
+  // Kick velocity into a spring channel (no-op until the channel exists,
+  // i.e. before the first applyPose).
+  function kick(key: string, dv: number): void {
+    const sp = springs.get(key);
+    if (sp !== undefined) sp.v += dv;
+  }
+
   return {
     root,
     body: torsoMesh,
     shakeGroup,
+    impulse(kind: ImpulseKind) {
+      switch (kind) {
+        case "ARM_L_FLUNG":
+          kick("aL.sr", 9);
+          kick("aL.sp", 3);
+          kick("aL.eb", -5);
+          break;
+        case "ARM_R_FLUNG":
+          kick("aR.sr", 9);
+          kick("aR.sp", 3);
+          kick("aR.eb", -5);
+          break;
+        case "ARM_L_RECOIL":
+          kick("aL.sp", -4);
+          kick("aL.eb", 6);
+          break;
+        case "ARM_R_RECOIL":
+          kick("aR.sp", -4);
+          kick("aR.eb", 6);
+          break;
+        case "TORSO_JERK":
+          kick("to.p", 2.4);
+          kick("hd.p", -1.5);
+          break;
+        case "TORSO_JOLT":
+          kick("to.p", -1.6);
+          kick("to.r", 2.0);
+          break;
+      }
+    },
     setBreakBucket(bucket: number) {
       const idx = Math.max(0, Math.min(4, Math.floor(bucket)));
       material.color.copy(breakTints[idx]!);

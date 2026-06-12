@@ -5,9 +5,14 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  BOTTOM_PLACEMENT,
+  TOP_PLACEMENT,
+  computeBodyFrames,
   computeBottomPose,
   computeFinishPoses,
+  computeScenePoses,
   computeTopPose,
+  gripZoneAnchor,
   legDirections,
   solveLeg,
   type BottomPoseInput,
@@ -317,5 +322,92 @@ describe("computeFinishPoses", () => {
     const b = computeFinishPoses("CROSS_COLLAR", 700);
     expect(a.bottom.breath).not.toBeCloseTo(b.bottom.breath, 5);
     expect(a.bottom.armL.elbowBend).not.toBeCloseTo(b.bottom.armL.elbowBend, 5);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Contact IK / FK / gaze / sway (computeScenePoses)
+
+const dist = (a: readonly number[], b: readonly number[]): number =>
+  Math.hypot(a[0]! - b[0]!, a[1]! - b[1]!, a[2]! - b[2]!);
+
+describe("computeScenePoses — contact IK", () => {
+  it("FK sanity: kneeling head is up high, supine head is toward the camera", () => {
+    const poses = computeScenePoses(bottomInput(), topInput());
+    const tf = computeBodyFrames(poses.top, TOP_PLACEMENT);
+    const bf = computeBodyFrames(poses.bottom, BOTTOM_PLACEMENT);
+    expect(tf.headPos[1]).toBeGreaterThan(0.85);
+    expect(bf.headPos[2]).toBeGreaterThan(0.3);
+    expect(bf.headPos[1]).toBeLessThan(0.65); // curled slightly off the mat
+  });
+
+  it("a sleeve grip plants the hand on the defender's actual hand", () => {
+    const poses = computeScenePoses(
+      bottomInput({ rightHand: { state: "CONTACT", target: "SLEEVE_L" } }),
+      topInput(),
+    );
+    const bf = computeBodyFrames(poses.bottom, BOTTOM_PLACEMENT);
+    const tf = computeBodyFrames(poses.top, TOP_PLACEMENT);
+    expect(dist(bf.handR, tf.handL)).toBeLessThan(0.06);
+  });
+
+  it("an out-of-range collar grip strains at full extension, then connects as posture breaks", () => {
+    const upright = computeScenePoses(
+      bottomInput({ leftHand: { state: "GRIPPED", target: "COLLAR_R" } }),
+      topInput(),
+    );
+    const broken = computeScenePoses(
+      bottomInput({ leftHand: { state: "GRIPPED", target: "COLLAR_R" } }),
+      topInput({ postureBreakY: 0.95 }),
+    );
+    const ubf = computeBodyFrames(upright.bottom, BOTTOM_PLACEMENT);
+    const utf = computeBodyFrames(upright.top, TOP_PLACEMENT);
+    const bbf = computeBodyFrames(broken.bottom, BOTTOM_PLACEMENT);
+    const btf = computeBodyFrames(broken.top, TOP_PLACEMENT);
+    // Upright: anchor unreachable → arm near max extension (0.55 m chain).
+    expect(dist(ubf.shoulderL, ubf.handL)).toBeGreaterThan(0.5);
+    // Broken down: the collar comes into range and the gap closes hard.
+    const uGap = dist(ubf.handL, gripZoneAnchor("COLLAR_R", utf)!);
+    const bGap = dist(bbf.handL, gripZoneAnchor("COLLAR_R", btf)!);
+    expect(bGap).toBeLessThan(uGap - 0.15);
+  });
+
+  it("a defender knee post lands on the attacker's actual knee", () => {
+    const poses = computeScenePoses(
+      bottomInput(),
+      topInput({ leftHand: { state: "CONTACT", target: "KNEE_R" } }),
+    );
+    const tf = computeBodyFrames(poses.top, TOP_PLACEMENT);
+    const bf = computeBodyFrames(poses.bottom, BOTTOM_PLACEMENT);
+    expect(dist(tf.handL, bf.kneeR)).toBeLessThan(0.06);
+  });
+
+  it("cut chops keep priority over IK on the chopping arm", () => {
+    const withCut = computeScenePoses(
+      bottomInput(),
+      topInput({ leftHand: { state: "CONTACT", target: "KNEE_R" }, cutElapsedLMs: 300 }),
+    );
+    const noIk = computeTopPose(
+      topInput({ leftHand: { state: "CONTACT", target: "KNEE_R" }, cutElapsedLMs: 300 }),
+    );
+    expect(withCut.top.armL).toEqual(noIk.armL);
+  });
+
+  it("heads track the opponent laterally", () => {
+    const left = computeScenePoses(bottomInput(), topInput({ weightLateral: -0.9 }));
+    const right = computeScenePoses(bottomInput(), topInput({ weightLateral: 0.9 }));
+    expect(left.bottom.headYaw).not.toBeCloseTo(right.bottom.headYaw, 3);
+    expect(Math.sign(left.bottom.headYaw)).toBe(-Math.sign(right.bottom.headYaw));
+  });
+});
+
+describe("idle micro-sway", () => {
+  it("an otherwise idle body keeps re-balancing over time", () => {
+    const a = computeBottomPose(bottomInput({ nowMs: 0 }));
+    const b = computeBottomPose(bottomInput({ nowMs: 800 }));
+    expect(a.pelvisX).not.toBeCloseTo(b.pelvisX, 5);
+    const ta = computeTopPose(topInput({ nowMs: 0 }));
+    const tb = computeTopPose(topInput({ nowMs: 800 }));
+    expect(ta.pelvisRoll).not.toBeCloseTo(tb.pelvisRoll, 5);
   });
 });
