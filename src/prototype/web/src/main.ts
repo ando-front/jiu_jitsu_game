@@ -777,6 +777,12 @@ function frame(now: number) {
         break;
       case "GUARD_OPENED":
         scene3d.pulseFlash(0xff7070, 360);
+        // Session ends in a scramble — pose the re-set instead of freezing.
+        finishTableau = {
+          kind: "SCRAMBLE",
+          startedNowMs: simState.game.nowMs,
+          transientUntilMs: null,
+        };
         break;
       case "PASS_STARTED":
         scene3d.pulseFlash(0x9ec9ff, 140);
@@ -886,8 +892,16 @@ function applyToScene(g: GameState) {
     nowMs: g.nowMs,
     stamina: g.bottom.stamina,
     guard: g.guard,
-    leftHand: { state: g.bottom.leftHand.state, target: g.bottom.leftHand.target },
-    rightHand: { state: g.bottom.rightHand.state, target: g.bottom.rightHand.target },
+    leftHand: {
+      state: g.bottom.leftHand.state,
+      target: g.bottom.leftHand.target,
+      sinceMs: g.nowMs - g.bottom.leftHand.stateEnteredMs,
+    },
+    rightHand: {
+      state: g.bottom.rightHand.state,
+      target: g.bottom.rightHand.target,
+      sinceMs: g.nowMs - g.bottom.rightHand.stateEnteredMs,
+    },
     leftFootState: g.bottom.leftFoot.state,
     rightFootState: g.bottom.rightFoot.state,
     hipAngle: intent.hip.hip_angle_target,
@@ -899,8 +913,16 @@ function applyToScene(g: GameState) {
   }, {
     nowMs: g.nowMs,
     stamina: g.top.stamina,
-    leftHand: { state: g.top.leftHand.state, target: g.top.leftHand.target },
-    rightHand: { state: g.top.rightHand.state, target: g.top.rightHand.target },
+    leftHand: {
+      state: g.top.leftHand.state,
+      target: g.top.leftHand.target,
+      sinceMs: g.nowMs - g.top.leftHand.stateEnteredMs,
+    },
+    rightHand: {
+      state: g.top.rightHand.state,
+      target: g.top.rightHand.target,
+      sinceMs: g.nowMs - g.top.rightHand.stateEnteredMs,
+    },
     postureBreakX: pb.x,
     postureBreakY: pb.y,
     weightForward: defense.hip.weight_forward,

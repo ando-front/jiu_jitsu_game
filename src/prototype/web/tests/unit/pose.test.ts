@@ -289,7 +289,7 @@ describe("computeFinishPoses", () => {
   });
 
   it("SCISSOR_SWEEP topples the defender onto his side", () => {
-    const { top } = computeFinishPoses("SCISSOR_SWEEP", 0);
+    const { top } = computeFinishPoses("SCISSOR_SWEEP", 600); // settled
     expect(Math.abs(top.pelvisRoll)).toBeGreaterThan(1);
     expect(top.pelvisY).toBeLessThan(0.35);
   });
@@ -302,19 +302,32 @@ describe("computeFinishPoses", () => {
   });
 
   it("HIP_BUMP sits the attacker up and tips the defender backward", () => {
-    const { bottom, top } = computeFinishPoses("HIP_BUMP", 0);
+    const { bottom, top } = computeFinishPoses("HIP_BUMP", 600); // settled
     expect(bottom.torsoPitch).toBeGreaterThan(0.9); // big sit-up
     expect(top.torsoPitch).toBeLessThan(-0.3); // knocked back
   });
 
   it("PASS settles the defender beside the swept legs", () => {
-    const { bottom, top } = computeFinishPoses("PASS", 0);
+    const { bottom, top } = computeFinishPoses("PASS", 600); // settled
     expect(Math.abs(top.pelvisX)).toBeGreaterThan(0.3); // off to the side
     // Both attacker legs swept the same way: world-side = −authored for
     // the mirrored left leg, so the signs must oppose.
     const right = legDirections(bottom.legR).thigh;
     const left = legDirections(bottom.legL).thigh;
     expect(Math.sign(left[0])).toBe(-Math.sign(right[0]));
+  });
+
+  it("motion finishes ramp through an execution phase into the settle", () => {
+    const mid = computeFinishPoses("SCISSOR_SWEEP", 60).top;
+    const settled = computeFinishPoses("SCISSOR_SWEEP", 1200).top;
+    expect(mid.pelvisRoll).toBeLessThan(settled.pelvisRoll);
+    expect(mid.pelvisY).toBeGreaterThan(settled.pelvisY); // still falling
+  });
+
+  it("SCRAMBLE re-sets both players after the guard opens", () => {
+    const { bottom, top } = computeFinishPoses("SCRAMBLE", 600);
+    expect(bottom.torsoPitch).toBeGreaterThan(0.5); // sat up
+    expect(top.pelvisZ).toBeLessThan(-0.1); // backing off
   });
 
   it("submission tableaux keep breathing (poses move over time)", () => {
@@ -409,5 +422,50 @@ describe("idle micro-sway", () => {
     const ta = computeTopPose(topInput({ nowMs: 0 }));
     const tb = computeTopPose(topInput({ nowMs: 800 }));
     expect(ta.pelvisRoll).not.toBeCloseTo(tb.pelvisRoll, 5);
+  });
+});
+
+describe("second realism pass — anticipation, reaction, coupling", () => {
+  it("a fresh reach winds up before the lunge", () => {
+    const windup = computeBottomPose(
+      bottomInput({ leftHand: { state: "REACHING", target: "COLLAR_L", sinceMs: 40 } }),
+    );
+    const lunge = computeBottomPose(
+      bottomInput({ leftHand: { state: "REACHING", target: "COLLAR_L", sinceMs: 400 } }),
+    );
+    expect(windup.armL.elbowBend).toBeGreaterThan(lunge.armL.elbowBend); // coiled
+    expect(windup.armL.shoulderPitch).toBeGreaterThan(lunge.armL.shoulderPitch); // pulled back
+  });
+
+  it("reaching twists the torso against the punch-out, mirrored per side", () => {
+    const idleYaw = computeBottomPose(bottomInput()).torsoYaw;
+    const left = computeBottomPose(
+      bottomInput({ leftHand: { state: "REACHING", target: "COLLAR_L", sinceMs: 100 } }),
+    ).torsoYaw;
+    const right = computeBottomPose(
+      bottomInput({ rightHand: { state: "REACHING", target: "COLLAR_R", sinceMs: 100 } }),
+    ).torsoYaw;
+    expect(left).not.toBeCloseTo(idleYaw, 5);
+    expect(Math.sign(left - idleYaw)).toBe(-Math.sign(right - idleYaw));
+  });
+
+  it("a held sleeve drags the defender's arm — both hands stay connected", () => {
+    const poses = computeScenePoses(
+      bottomInput({ rightHand: { state: "GRIPPED", target: "SLEEVE_L" } }),
+      topInput(),
+    );
+    const bf = computeBodyFrames(poses.bottom, BOTTOM_PLACEMENT);
+    const tf = computeBodyFrames(poses.top, TOP_PLACEMENT);
+    expect(dist(tf.handL, bf.handR)).toBeLessThan(0.06); // hand spheres overlap
+    // The dragged arm fights the grip — visible strain tremor.
+    expect(poses.top.armL.tremor).toBeGreaterThanOrEqual(0.3);
+  });
+
+  it("the defender's weight shifts over a posted hand and dips under an extracted arm", () => {
+    const idle = computeTopPose(topInput());
+    const posted = computeTopPose(topInput({ rightHand: { state: "GRIPPED", target: "CHEST" } }));
+    const extracted = computeTopPose(topInput({ armExtractedL: true }));
+    expect(posted.pelvisX).toBeGreaterThan(idle.pelvisX);
+    expect(extracted.pelvisRoll).toBeLessThan(idle.pelvisRoll);
   });
 });
