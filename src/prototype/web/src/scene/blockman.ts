@@ -205,6 +205,11 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
   // Initiative camera dolly target — smoothed in updateMotion so the cut
   // between initiative states reads as a slow push, not a teleport.
   let cameraDollyTarget = 1.9;
+  // Handheld camera: a fixed mount plus low-frequency operator drift +
+  // breathing bob, layered every frame so the shot never sits dead still.
+  const camBaseX = camera.position.x;
+  const camBaseY = camera.position.y;
+  const camLookAt = new THREE.Vector3(0, 0.55, -0.7);
 
   return {
     renderer,
@@ -230,6 +235,19 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
       bottom.applyPose(bottomPose, nowMs);
       top.applyPose(topPose, nowMs);
       camera.position.z += (cameraDollyTarget - camera.position.z) * 0.05;
+      // Handheld drift: three incommensurate sines per axis → organic,
+      // non-repeating operator sway, plus a slow vertical breathing bob.
+      const t = nowMs / 1000;
+      camera.position.x = camBaseX +
+        Math.sin(t * 0.37) * 0.020 + Math.sin(t * 0.91 + 1.7) * 0.008;
+      camera.position.y = camBaseY +
+        Math.sin(t * 0.53 + 0.6) * 0.014 + Math.sin(t * 1.20) * 0.006;
+      // Keep the framing centred on the action while it sways.
+      camera.lookAt(
+        camLookAt.x + Math.sin(t * 0.29) * 0.03,
+        camLookAt.y + Math.sin(t * 0.43 + 2.1) * 0.02,
+        camLookAt.z,
+      );
     },
     pulseFlash(color, durationMs = 180) {
       activeFlash = {
@@ -352,7 +370,7 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
   const legLMat = new THREE.MeshStandardMaterial({ color: baseColor.clone(), roughness: 0.6 });
   const legRMat = new THREE.MeshStandardMaterial({ color: baseColor.clone(), roughness: 0.6 });
 
-  type ArmJoints = { shoulder: THREE.Group; elbow: THREE.Group };
+  type ArmJoints = { shoulder: THREE.Group; elbow: THREE.Group; hand: THREE.Mesh };
   function buildArm(sideX: number, mat: THREE.Material): ArmJoints {
     const shoulder = new THREE.Group();
     shoulder.position.set(sideX, RIG_DIMS.shoulderY, 0);
@@ -365,13 +383,14 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
     elbow.position.set(0, -RIG_DIMS.upperArm, 0);
     shoulder.add(elbow);
     elbow.add(limbCapsule(0.05, 0.15, mat));
+    // The hand sphere is squashed/splayed by grip in applyArm.
     const hand = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), mat);
     hand.position.y = -RIG_DIMS.foreArm;
     elbow.add(hand);
-    return { shoulder, elbow };
+    return { shoulder, elbow, hand };
   }
 
-  type LegJoints = { hip: THREE.Group; knee: THREE.Group };
+  type LegJoints = { hip: THREE.Group; knee: THREE.Group; ankle: THREE.Group };
   function buildLeg(sideX: number, mat: THREE.Material): LegJoints {
     const hip = new THREE.Group();
     hip.position.set(sideX, RIG_DIMS.hipY, 0);
@@ -384,10 +403,14 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
     knee.position.set(0, -RIG_DIMS.thigh, 0);
     hip.add(knee);
     knee.add(limbCapsule(0.065, 0.21, mat));
+    // Foot hangs off an ankle pivot so it can plantar/dorsiflex.
+    const ankle = new THREE.Group();
+    ankle.position.set(0, -0.36, 0);
+    knee.add(ankle);
     const foot = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.06, 0.18), mat);
-    foot.position.set(0, -0.36, 0.05);
-    knee.add(foot);
-    return { hip, knee };
+    foot.position.set(0, 0, 0.05);
+    ankle.add(foot);
+    return { hip, knee, ankle };
   }
 
   const armL = buildArm(-RIG_DIMS.shoulderX, armLMat);
@@ -462,6 +485,10 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
     joints.shoulder.rotation.z = drive(`${prefix}.sr`, pose.shoulderRoll, dtS, TUNE.arm) * sideSign;
     joints.shoulder.rotation.y = drive(`${prefix}.sy`, pose.shoulderYaw, dtS, TUNE.arm) * sideSign;
     joints.elbow.rotation.x = -(drive(`${prefix}.eb`, pose.elbowBend, dtS, TUNE.arm) + tre * 1.5);
+    // Hand open/close: grip 0 splays the hand flat & wide, grip 1 clenches
+    // it into a compact fist. Smoothed so the squeeze reads continuously.
+    const g = drive(`${prefix}.gr`, pose.grip ?? 0.25, dtS, TUNE.arm);
+    joints.hand.scale.set(1.55 - g * 0.75, 0.62 + g * 0.33, 1.42 - g * 0.62);
   }
 
   function applyLeg(
@@ -475,6 +502,8 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
     joints.hip.rotation.y = drive(`${prefix}.hy`, pose.hipYaw, dtS, TUNE.leg) * sideSign;
     joints.hip.rotation.z = drive(`${prefix}.hr`, pose.hipRoll, dtS, TUNE.leg) * sideSign;
     joints.knee.rotation.x = drive(`${prefix}.kb`, pose.kneeBend, dtS, TUNE.leg);
+    // Ankle: + plantarflexes (toes/foot swing back, hooking), − dorsiflexes.
+    joints.ankle.rotation.x = drive(`${prefix}.ak`, pose.ankle ?? 0, dtS, TUNE.leg);
   }
 
   // Kick velocity into a spring channel (no-op until the channel exists,
