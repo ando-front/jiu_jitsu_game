@@ -167,6 +167,42 @@ function clamp01(v: number): number {
   return Math.max(0, Math.min(1, v));
 }
 
+// Two-octave breathing oscillator in [-1, 1] — a dominant breath rhythm plus
+// a slower harmonic, so the depth wanders instead of looping perfectly.
+// `phase` lets the two bodies breathe out of sync.
+function breathOscillator(nowMs: number, hz: number, phase = 0): number {
+  const t = nowMs / 1000;
+  return 0.82 * Math.sin(t * TWO_PI * hz + phase) +
+    0.18 * Math.sin(t * TWO_PI * hz * 0.5 + phase * 1.7);
+}
+
+// Idle micro-sway: three incommensurate sines so the re-balancing never
+// repeats on a short loop. `phaseSet` 0 = bottom-flavoured, 1 = top-flavoured.
+function idleSway(nowMs: number, fatigue: number, phaseSet: number): number {
+  const t = nowMs / 1000;
+  const amp = 1 + fatigue * 1.2;
+  const p = phaseSet === 0 ? [1.3, 0.0, 5.5] : [3.1, 0.7, 2.3];
+  return (
+    Math.sin(t * TWO_PI * 0.31 + p[0]!) * 0.5 +
+    Math.sin(t * TWO_PI * 0.47 + p[1]!) * 0.32 +
+    Math.sin(t * TWO_PI * 0.17 + p[2]!) * 0.18
+  ) * amp;
+}
+
+function idleSway2(nowMs: number, fatigue: number, phaseSet: number): number {
+  const t = nowMs / 1000;
+  const amp = 1 + fatigue * 1.2;
+  const base = phaseSet === 0 ? 4.0 : 1.9;
+  return (
+    Math.sin(t * TWO_PI * 0.23 + base) * 0.7 +
+    Math.sin(t * TWO_PI * 0.13 + base * 0.6) * 0.3
+  ) * amp;
+}
+
+function handBusyState(h: LimbSnapshot): boolean {
+  return h.state === "REACHING" || h.state === "CONTACT" || h.state === "GRIPPED";
+}
+
 function armPoseFrom(
   hand: LimbSnapshot,
   table: Readonly<Record<string, ReachTarget>>,
@@ -525,15 +561,15 @@ function windowEntry(tech: Technique): WindowEntry {
 
 export function computeBottomPose(input: BottomPoseInput): BodyPose {
   const fatigue = clamp01(1 - input.stamina);
-  // Breathing speeds up as stamina drains (§5.4's "呼吸が重い" zone).
+  // Breathing speeds up as stamina drains (§5.4's "呼吸が重い" zone). Two
+  // octaves give the breath a non-repeating depth — the occasional deeper
+  // inhale instead of a perfect metronome.
   const breathHz = 0.28 + fatigue * 0.55;
-  const breath = Math.sin((input.nowMs / 1000) * TWO_PI * breathHz);
-  // Idle micro-sway: two incommensurate sines ≈ a living body constantly
+  const breath = breathOscillator(input.nowMs, breathHz);
+  // Idle micro-sway: three incommensurate sines ≈ a living body constantly
   // re-balancing. Fatigue makes the adjustments bigger and sloppier.
-  const swayAmp = 1 + fatigue * 1.2;
-  const sway = (Math.sin((input.nowMs / 1000) * TWO_PI * 0.31 + 1.3) * 0.6 +
-    Math.sin((input.nowMs / 1000) * TWO_PI * 0.47) * 0.4) * swayAmp;
-  const sway2 = Math.sin((input.nowMs / 1000) * TWO_PI * 0.23 + 4.0) * swayAmp;
+  const sway = idleSway(input.nowMs, fatigue, 0);
+  const sway2 = idleSway2(input.nowMs, fatigue, 0);
 
   // Sit-up crunch when actively attacking the collar / posture-break line.
   const sitUp = isActiveHigh(input.leftHand) || isActiveHigh(input.rightHand) ? 0.22 : 0;
@@ -541,6 +577,21 @@ export function computeBottomPose(input: BottomPoseInput): BodyPose {
     input.leftFootState === "LOCKED" && input.rightFootState === "LOCKED";
   // Judgment window: the body coils — hips load, torso curls in tighter.
   const coil = input.windowOpen ? 1 : 0;
+
+  // Guard-retention shuffle: a closed guard is never still — when idle (no
+  // active hands, window shut) the hips micro-rotate and the legs make small
+  // rhythmic re-grips, the constant fight to keep the position.
+  const idleGuard =
+    !input.windowOpen &&
+    !handBusyState(input.leftHand) && !handBusyState(input.rightHand) &&
+    legsLocked;
+  const shuffleT = (input.nowMs / 1000) * TWO_PI;
+  const shuffle = idleGuard ? 1 : 0;
+  const shuffleYaw = shuffle * Math.sin(shuffleT * 0.6 + 0.5) * 0.05;
+  const shuffleRoll = shuffle * Math.sin(shuffleT * 0.45) * 0.04;
+  const shuffleSqueeze = shuffle * (0.5 + 0.5 * Math.sin(shuffleT * 0.8)) * 0.12;
+  // Idle head scan: glance side to side hunting for the opening.
+  const headScan = idleGuard ? Math.sin(shuffleT * 0.35 + 2.0) * 0.22 : 0;
   // Action-reaction: a fresh reach drives the same-side shoulder forward,
   // twisting the torso against the punch-out. Fades after the lunge.
   const reachTwistFor = (hand: LimbSnapshot, side: number): number => {
@@ -570,8 +621,8 @@ export function computeBottomPose(input: BottomPoseInput): BodyPose {
     // the rig's yaw flip) the head toward the camera; the small addition
     // keeps the shoulders just off the mat.
     pelvisPitch: -Math.PI / 2 + 0.15,
-    pelvisYaw: input.hipAngle + (entry.pelvisYaw ?? 0),
-    pelvisRoll: input.hipLateral * 0.25 + (entry.pelvisRoll ?? 0),
+    pelvisYaw: input.hipAngle + (entry.pelvisYaw ?? 0) + shuffleYaw,
+    pelvisRoll: input.hipLateral * 0.25 + (entry.pelvisRoll ?? 0) + shuffleRoll,
     // Positive pitch curls the chest up toward the opponent (supine front
     // = world up); fatigue sags it back toward the mat.
     torsoPitch: 0.20 + sitUp * 0.7 + coil * 0.10 + breath * 0.04 - fatigue * 0.15 + (entry.torsoPitch ?? 0),
@@ -579,7 +630,7 @@ export function computeBottomPose(input: BottomPoseInput): BodyPose {
     torsoRoll: input.hipLateral * 0.18 + sway * 0.015 + (entry.torsoRoll ?? 0),
     torsoTremor: 0,
     headPitch: 0.45 + sitUp * 0.4 - fatigue * 0.35 + breath * 0.02,
-    headYaw: input.hipAngle * 0.3,
+    headYaw: input.hipAngle * 0.3 + headScan,
     breath,
     armL: handBusy(input.leftHand)
       ? armPoseFrom(input.leftHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthL)
@@ -587,9 +638,16 @@ export function computeBottomPose(input: BottomPoseInput): BodyPose {
     armR: handBusy(input.rightHand)
       ? armPoseFrom(input.rightHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthR)
       : entry.armR ?? armPoseFrom(input.rightHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthR),
-    legL: entry.legL ?? bottomLegPose(input.leftFootState, input.guard, input.nowMs),
-    legR: entry.legR ?? bottomLegPose(input.rightFootState, input.guard, input.nowMs),
+    legL: shuffleLeg(entry.legL ?? bottomLegPose(input.leftFootState, input.guard, input.nowMs), shuffleSqueeze),
+    legR: shuffleLeg(entry.legR ?? bottomLegPose(input.rightFootState, input.guard, input.nowMs), shuffleSqueeze),
   };
+}
+
+// Adds a rhythmic squeeze to a locked-guard leg (knee folds tighter, knees
+// pinch in) — the constant re-grip of guard retention.
+function shuffleLeg(leg: LegPose, squeeze: number): LegPose {
+  if (squeeze === 0) return leg;
+  return { ...leg, kneeBend: leg.kneeBend + squeeze, hipRoll: leg.hipRoll - squeeze * 0.4 };
 }
 
 // Balance recovery: when the defender is broken down hard and the relevant
@@ -623,18 +681,26 @@ export function computeTopPose(input: TopPoseInput): BodyPose {
   const fatigue = clamp01(1 - input.stamina);
   const breathHz = 0.28 + fatigue * 0.55;
   // Phase-offset so the two bodies never breathe in lockstep.
-  const breath = Math.sin((input.nowMs / 1000) * TWO_PI * breathHz + Math.PI * 0.6);
+  const breath = breathOscillator(input.nowMs, breathHz, Math.PI * 0.6);
   // Idle micro-sway (phase-offset from the bottom player's).
-  const swayAmp = 1 + fatigue * 1.2;
-  const sway = (Math.sin((input.nowMs / 1000) * TWO_PI * 0.29 + 3.1) * 0.6 +
-    Math.sin((input.nowMs / 1000) * TWO_PI * 0.43 + 0.7) * 0.4) * swayAmp;
-  const sway2 = Math.sin((input.nowMs / 1000) * TWO_PI * 0.21 + 1.9) * swayAmp;
+  const sway = idleSway(input.nowMs, fatigue, 1);
+  const sway2 = idleSway2(input.nowMs, fatigue, 1);
 
   const pbX = input.postureBreakX;
   const pbY = input.postureBreakY;
   const pbMag = clamp01(Math.hypot(pbX, pbY));
   // Strain tremor while fighting a deep posture break.
   const strain = pbMag > 0.45 ? (pbMag - 0.45) * 0.9 : 0;
+
+  // Pressure weave: a passer hunting the angle rocks weight side-to-side and
+  // probes forward. Only while engaged-but-not-committed (posture still
+  // intact, not deep into a pass) — it's the search before the drive.
+  const searching = pbMag < 0.4 && (input.passElapsedMs === null);
+  const weaveT = (input.nowMs / 1000) * TWO_PI;
+  const weave = searching ? 1 : 0;
+  const weaveX = weave * Math.sin(weaveT * 0.5 + 0.4) * 0.06;
+  const weaveProbe = weave * (0.5 + 0.5 * Math.sin(weaveT * 0.7)) * 0.05;
+  const weaveRoll = weave * Math.sin(weaveT * 0.5 + 0.4) * 0.08;
 
   let armL = input.armExtractedL
     ? mkArm(EXTRACTED_ARM.pitch, EXTRACTED_ARM.roll, EXTRACTED_ARM.yaw, EXTRACTED_ARM.elbow, 0.25)
@@ -686,12 +752,12 @@ export function computeTopPose(input: TopPoseInput): BodyPose {
   const extractDip = (input.armExtractedL ? -0.07 : 0) + (input.armExtractedR ? 0.07 : 0);
 
   return {
-    pelvisX: pbX * 0.25 + input.weightLateral * 0.22 + (driveRight ? 1 : -1) * passT * 0.10 + sway * 0.014 + weightShiftX,
+    pelvisX: pbX * 0.25 + input.weightLateral * 0.22 + (driveRight ? 1 : -1) * passT * 0.10 + sway * 0.014 + weightShiftX + weaveX,
     pelvisY: 0.50 - fatigue * 0.04 - pbMag * 0.06 - passT * 0.06 + brace * 0.02,
-    pelvisZ: pbY * 0.30 + input.weightForward * 0.22 + passT * (0.18 + passSurge) + sway2 * 0.010,
+    pelvisZ: pbY * 0.30 + input.weightForward * 0.22 + passT * (0.18 + passSurge) + sway2 * 0.010 + weaveProbe,
     pelvisPitch: 0,
     pelvisYaw: 0,
-    pelvisRoll: input.weightLateral * 0.10 + sway * 0.018 + extractDip,
+    pelvisRoll: input.weightLateral * 0.10 + sway * 0.018 + extractDip + weaveRoll,
     // Combat-base hunch (constant +0.10 forward), then posture break
     // crumples the torso forward / sideways; the pass drive and fatigue
     // round it further, while a counter brace straightens it.

@@ -573,3 +573,47 @@ describe("Tier 4 — balance recovery post", () => {
     expect(balancePost(topInput({ postureBreakX: 0.9 }))).not.toBeNull();
   });
 });
+
+describe("Tier 5 — motion variation (alive idle)", () => {
+  it("a locked idle guard keeps shuffling (legs + hips move over time)", () => {
+    const a = computeBottomPose(bottomInput({ nowMs: 0 }));
+    const b = computeBottomPose(bottomInput({ nowMs: 700 }));
+    expect(a.legL.kneeBend).not.toBeCloseTo(b.legL.kneeBend, 4);
+    expect(a.pelvisYaw).not.toBeCloseTo(b.pelvisYaw, 4);
+    expect(a.headYaw).not.toBeCloseTo(b.headYaw, 4); // head scans
+  });
+
+  it("the guard shuffle stops once a hand engages", () => {
+    // With a busy hand, two timestamps differ only by the always-on sway,
+    // not the larger shuffle — pelvisYaw stays near the hipAngle baseline.
+    const busy = { state: "GRIPPED", target: "COLLAR_L" } as const;
+    const a = computeBottomPose(bottomInput({ nowMs: 0, leftHand: busy }));
+    const b = computeBottomPose(bottomInput({ nowMs: 700, leftHand: busy }));
+    expect(Math.abs(a.pelvisYaw - b.pelvisYaw)).toBeLessThan(0.02);
+  });
+
+  it("a searching passer weaves weight side-to-side over time", () => {
+    const a = computeTopPose(topInput({ nowMs: 0 }));
+    const b = computeTopPose(topInput({ nowMs: 900 }));
+    expect(a.pelvisX).not.toBeCloseTo(b.pelvisX, 4);
+    expect(a.pelvisRoll).not.toBeCloseTo(b.pelvisRoll, 4);
+  });
+
+  it("the weave settles once the pass commits", () => {
+    const a = computeTopPose(topInput({ nowMs: 0, passElapsedMs: 300, weightLateral: 0.5 }));
+    const b = computeTopPose(topInput({ nowMs: 900, passElapsedMs: 300, weightLateral: 0.5 }));
+    // Only the small always-on sway remains; no large search weave.
+    expect(Math.abs(a.pelvisX - b.pelvisX)).toBeLessThan(0.05);
+  });
+
+  it("breathing is two-octave (not a pure single sine — half-period asymmetric)", () => {
+    // For a pure sine of freq f, value at t and t+half-period would be exact
+    // negatives. The second octave breaks that symmetry.
+    const fresh = bottomInput({ stamina: 1 });
+    const hz = 0.28;
+    const halfMs = (1 / hz) * 500; // half period in ms
+    const v0 = computeBottomPose({ ...fresh, nowMs: 300 }).breath;
+    const vHalf = computeBottomPose({ ...fresh, nowMs: 300 + halfMs }).breath;
+    expect(Math.abs(v0 + vHalf)).toBeGreaterThan(1e-3); // not exact negatives
+  });
+});
