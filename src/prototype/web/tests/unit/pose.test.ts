@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   BOTTOM_PLACEMENT,
   TOP_PLACEMENT,
+  balancePost,
   computeBodyFrames,
   computeBottomPose,
   computeFinishPoses,
@@ -538,5 +539,37 @@ describe("Tier 3 — technique-specific window entry", () => {
       }),
     );
     expect(pose.armL.grip!).toBeGreaterThan(0.9); // live grip, not the canned 0.85
+  });
+});
+
+describe("Tier 4 — balance recovery post", () => {
+  it("a hard posture break with a free hand throws it out to post", () => {
+    const stable = computeTopPose(topInput({ postureBreakX: 0.2 }));
+    const broken = computeTopPose(topInput({ postureBreakX: 0.9 }));
+    // The posting (right) arm swings out — more shoulder roll than stable.
+    expect(broken.armR.shoulderRoll).toBeGreaterThan(stable.armR.shoulderRoll);
+  });
+
+  it("the post plants the free hand low on the mat (near y=0)", () => {
+    const poses = computeScenePoses(
+      bottomInput(),
+      topInput({ postureBreakX: 0.95, postureBreakY: 0.3 }),
+    );
+    const tf = computeBodyFrames(poses.top, TOP_PLACEMENT);
+    expect(tf.handR[1]).toBeLessThan(0.55); // dropped toward the mat (arm at full reach)
+  });
+
+  it("does not post with an engaged hand", () => {
+    const gripping = computeTopPose(
+      topInput({ postureBreakX: 0.95, rightHand: { state: "GRIPPED", target: "CHEST" } }),
+    );
+    const free = computeTopPose(topInput({ postureBreakX: 0.95 }));
+    // The gripping right hand keeps its grip pose, not the post swing-out.
+    expect(gripping.armR.shoulderRoll).toBeLessThan(free.armR.shoulderRoll);
+  });
+
+  it("no post while posture is stable", () => {
+    expect(balancePost(topInput({ postureBreakX: 0.2, postureBreakY: 0.2 }))).toBeNull();
+    expect(balancePost(topInput({ postureBreakX: 0.9 }))).not.toBeNull();
   });
 });
