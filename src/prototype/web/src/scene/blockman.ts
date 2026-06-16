@@ -548,9 +548,12 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
       headGroup.rotation.x = drive("hd.p", pose.headPitch, dtS, TUNE.torso);
       headGroup.rotation.y = drive("hd.y", pose.headYaw, dtS, TUNE.torso);
 
-      // Breathing: chest expands; raw oscillator, already smooth.
+      // Breathing: chest expands and the shoulders rise with it; raw
+      // oscillator, already smooth.
       const b = pose.breath * 0.5 + 0.5;
       torsoMesh.scale.set(1 + b * 0.04, 1, 1 + b * 0.06);
+      armL.shoulder.position.y = RIG_DIMS.shoulderY + b * 0.012;
+      armR.shoulder.position.y = RIG_DIMS.shoulderY + b * 0.012;
 
       applyArm("aL", armL, pose.armL, -1, dtS, nowMs, 0.0);
       applyArm("aR", armR, pose.armR, 1, dtS, nowMs, 2.4);

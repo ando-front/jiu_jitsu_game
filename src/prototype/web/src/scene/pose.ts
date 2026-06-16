@@ -68,7 +68,8 @@ export type BodyPose = Readonly<{
   legR: LegPose;
 }>;
 
-export type LimbSnapshot = Readonly<{ state: string; target: string | null }>;
+// sinceMs = time spent in the current state; omitted means "long settled".
+export type LimbSnapshot = Readonly<{ state: string; target: string | null; sinceMs?: number }>;
 
 export type BottomPoseInput = Readonly<{
   nowMs: number;
@@ -166,7 +167,20 @@ function armPoseFrom(
   const zone = hand.target !== null ? table[hand.target] : undefined;
   const reach = zone ?? rest;
   switch (hand.state) {
-    case "REACHING":
+    case "REACHING": {
+      // Anticipation: the first beat of a reach pulls *back* (elbow coils,
+      // shoulder loads past the rest frame); the spring then whips the arm
+      // out to the extended lunge target.
+      const sinceMs = hand.sinceMs ?? 1000;
+      if (sinceMs < 110) {
+        return {
+          shoulderPitch: rest.pitch + 0.20,
+          shoulderRoll: rest.roll + 0.10,
+          shoulderYaw: rest.yaw,
+          elbowBend: rest.elbow + 0.18,
+          tremor: 0,
+        };
+      }
       // Arm shoots out: elbow extends past the contact pose for a visible lunge.
       return {
         shoulderPitch: reach.pitch,
@@ -175,6 +189,7 @@ function armPoseFrom(
         elbowBend: reach.elbow * 0.45,
         tremor: 0,
       };
+    }
     case "CONTACT":
       return {
         shoulderPitch: reach.pitch,
@@ -431,6 +446,14 @@ export function computeBottomPose(input: BottomPoseInput): BodyPose {
     input.leftFootState === "LOCKED" && input.rightFootState === "LOCKED";
   // Judgment window: the body coils — hips load, torso curls in tighter.
   const coil = input.windowOpen ? 1 : 0;
+  // Action-reaction: a fresh reach drives the same-side shoulder forward,
+  // twisting the torso against the punch-out. Fades after the lunge.
+  const reachTwistFor = (hand: LimbSnapshot, side: number): number => {
+    if (hand.state !== "REACHING") return 0;
+    const sinceMs = hand.sinceMs ?? 1000;
+    return sinceMs < 320 ? side * 0.09 : side * 0.03;
+  };
+  const reachTwist = reachTwistFor(input.leftHand, -1) + reachTwistFor(input.rightHand, 1);
 
   return {
     pelvisX: input.hipLateral * 0.20 + sway * 0.012,
@@ -445,10 +468,10 @@ export function computeBottomPose(input: BottomPoseInput): BodyPose {
     // Positive pitch curls the chest up toward the opponent (supine front
     // = world up); fatigue sags it back toward the mat.
     torsoPitch: 0.20 + sitUp * 0.7 + coil * 0.10 + breath * 0.04 - fatigue * 0.15,
-    torsoYaw: input.hipAngle * 0.35 + sway2 * 0.02,
+    torsoYaw: input.hipAngle * 0.35 + sway2 * 0.02 + reachTwist,
     torsoRoll: input.hipLateral * 0.18 + sway * 0.015,
     torsoTremor: 0,
-    headPitch: 0.45 + sitUp * 0.4 - fatigue * 0.35,
+    headPitch: 0.45 + sitUp * 0.4 - fatigue * 0.35 + breath * 0.02,
     headYaw: input.hipAngle * 0.3,
     breath,
     armL: armPoseFrom(input.leftHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthL),
@@ -508,13 +531,22 @@ export function computeTopPose(input: TopPoseInput): BodyPose {
   // Counter window: brace — posture up a touch, ready to spring.
   const brace = input.counterWindowOpen ? 1 : 0;
 
+  // Weight shift: load drifts over whichever hand is posted/gripping, and
+  // the body dips toward a side whose arm has been dragged across.
+  const postLoad = (hand: LimbSnapshot, side: number): number =>
+    hand.state === "CONTACT" || hand.state === "GRIPPED" ? side * 0.028 : 0;
+  const weightShiftX =
+    postLoad(input.leftHand, -1) + postLoad(input.rightHand, 1) +
+    (input.armExtractedL ? -0.045 : 0) + (input.armExtractedR ? 0.045 : 0);
+  const extractDip = (input.armExtractedL ? -0.07 : 0) + (input.armExtractedR ? 0.07 : 0);
+
   return {
-    pelvisX: pbX * 0.25 + input.weightLateral * 0.22 + (driveRight ? 1 : -1) * passT * 0.10 + sway * 0.014,
+    pelvisX: pbX * 0.25 + input.weightLateral * 0.22 + (driveRight ? 1 : -1) * passT * 0.10 + sway * 0.014 + weightShiftX,
     pelvisY: 0.50 - fatigue * 0.04 - pbMag * 0.06 - passT * 0.06 + brace * 0.02,
     pelvisZ: pbY * 0.30 + input.weightForward * 0.22 + passT * (0.18 + passSurge) + sway2 * 0.010,
     pelvisPitch: 0,
     pelvisYaw: 0,
-    pelvisRoll: input.weightLateral * 0.10 + sway * 0.018,
+    pelvisRoll: input.weightLateral * 0.10 + sway * 0.018 + extractDip,
     // Combat-base hunch (constant +0.10 forward), then posture break
     // crumples the torso forward / sideways; the pass drive and fatigue
     // round it further, while a counter brace straightens it.
@@ -525,7 +557,7 @@ export function computeTopPose(input: TopPoseInput): BodyPose {
     torsoRoll: pbX * 0.45 + sway * 0.02,
     torsoTremor: strain + passT * 0.15,
     // Eyes stay on the opponent below; exhaustion drops the chin further.
-    headPitch: 0.45 + fatigue * 0.25 + Math.max(0, pbY) * 0.20,
+    headPitch: 0.45 + fatigue * 0.25 + Math.max(0, pbY) * 0.20 + breath * 0.02,
     headYaw: -pbX * 0.25,
     breath,
     armL,
@@ -543,7 +575,7 @@ export function computeTopPose(input: TopPoseInput): BodyPose {
 // (drives squeeze pulses and heavy post-scramble breathing). The rig's
 // springs handle the transition into the tableau, so these are pure holds.
 
-export type FinishKind = Technique | CounterTechnique | "PASS";
+export type FinishKind = Technique | CounterTechnique | "PASS" | "SCRAMBLE";
 
 export type FinishPoses = Readonly<{ bottom: BodyPose; top: BodyPose }>;
 
@@ -730,6 +762,27 @@ export function computeFinishPoses(kind: FinishKind, tMs: number): FinishPoses {
       top.legR = { hipPitch: -0.30, hipYaw: 0, hipRoll: 0.30, kneeBend: 1.2 };
       break;
     }
+    case "SCRAMBLE": {
+      // Guard opened: the bottom player scrambles up to a seated base while
+      // the top player backs out of range, both re-setting their frames.
+      bottom.pelvisY = 0.24;
+      bottom.pelvisPitch = -0.85;
+      bottom.torsoPitch = 0.70;
+      bottom.headPitch = 0.10;
+      bottom.legL = solveLeg([0.50, -0.65, 0.40], [-0.15, -0.55, -0.80]);
+      bottom.legR = solveLeg([0.50, -0.65, 0.40], [-0.15, -0.55, -0.80]);
+      bottom.armL = mkArm(-0.90, 0.20, 0, 0.90);
+      bottom.armR = mkArm(-0.90, 0.20, 0, 0.90);
+      top.pelvisZ = -0.28;
+      top.pelvisY = 0.55;
+      top.torsoPitch = 0.05;
+      top.headPitch = 0.30;
+      top.armL = mkArm(-0.95, 0.20, 0, 0.50);
+      top.armR = mkArm(-0.95, 0.20, 0, 0.50);
+      // Combat base rising: one knee up, foot planted.
+      top.legR = { hipPitch: -1.30, hipYaw: 0, hipRoll: 0.25, kneeBend: 1.45 };
+      break;
+    }
     case "PASS": {
       // Guard passed: defender settled chest-on-chest past the legs, both
       // of the attacker's legs swept to one side.
@@ -752,6 +805,35 @@ export function computeFinishPoses(kind: FinishKind, tMs: number): FinishPoses {
       top.legR = { hipPitch: -0.15, hipYaw: 0, hipRoll: 0.35, kneeBend: 0.6 };
       break;
     }
+  }
+
+  // Execution phase: the first ~450 ms ramps the motion finishes from a
+  // mid-action keyframe into the settled hold (smoothstep, on top of the
+  // rig's springs). Submissions stay as isometric holds.
+  const phaseT = clamp01(tMs / 450);
+  const phase = phaseT * phaseT * (3 - 2 * phaseT);
+  const ramp = (from: number, to: number): number => from + (to - from) * phase;
+  switch (kind) {
+    case "SCISSOR_SWEEP":
+    case "FLOWER_SWEEP": {
+      const sign = kind === "SCISSOR_SWEEP" ? 1 : -1;
+      top.pelvisRoll = ramp(sign * 0.35, top.pelvisRoll);
+      top.pelvisX = ramp(sign * 0.15, top.pelvisX);
+      top.pelvisY = ramp(0.45, top.pelvisY);
+      bottom.torsoPitch = ramp(0.35, bottom.torsoPitch);
+      break;
+    }
+    case "HIP_BUMP":
+      bottom.torsoPitch = ramp(0.30, bottom.torsoPitch);
+      top.torsoPitch = ramp(0.15, top.torsoPitch);
+      top.pelvisZ = ramp(0, top.pelvisZ);
+      break;
+    case "PASS":
+      top.pelvisX = ramp(0.10, top.pelvisX);
+      top.pelvisZ = ramp(0.05, top.pelvisZ);
+      break;
+    default:
+      break;
   }
 
   return { bottom, top };
@@ -1124,20 +1206,59 @@ export function computeScenePoses(
   const tFrames = computeBodyFrames(topMid, TOP_PLACEMENT);
   const bottomArmL = ikArm(bottomIn.leftHand, b0.armL, "grip", tFrames, bFrames0, "L");
   const bottomArmR = ikArm(bottomIn.rightHand, b0.armR, "grip", tFrames, bFrames0, "R");
+  const bottomMid: BodyPose = { ...b0, armL: bottomArmL, armR: bottomArmR };
 
-  // 3. Heads track the opponent.
-  const bGaze = lookAt(b0, bFrames0, tFrames.headPos);
-  const tGaze = lookAt(topMid, tFrames, bFrames0.headPos);
+  // 3. Grip coupling: a held sleeve/wrist drags the *defender's* arm along —
+  //    their wrist is re-solved onto the gripping hand, so the pull reads on
+  //    both bodies and the two hands visibly stay connected.
+  const bFrames = computeBodyFrames(bottomMid, BOTTOM_PLACEMENT);
+  const grippedSide = (zoneSide: "L" | "R"): V3 | null => {
+    for (const [hand, pos] of [
+      [bottomIn.leftHand, bFrames.handL],
+      [bottomIn.rightHand, bFrames.handR],
+    ] as const) {
+      if (
+        hand.state === "GRIPPED" &&
+        (hand.target === `SLEEVE_${zoneSide}` || hand.target === `WRIST_${zoneSide}`)
+      ) {
+        return pos;
+      }
+    }
+    return null;
+  };
+  const dragArm = (
+    side: "L" | "R",
+    current: ArmPose,
+    blocked: boolean,
+  ): ArmPose => {
+    if (blocked) return current;
+    const grabPoint = grippedSide(side);
+    if (grabPoint === null) return current;
+    const shoulder = side === "L" ? tFrames.shoulderL : tFrames.shoulderR;
+    const dragged = solveArmIK(
+      grabPoint,
+      shoulder,
+      tFrames.torsoRot,
+      side === "L" ? -1 : 1,
+      Math.max(current.tremor, 0.3), // fighting the grip
+    );
+    return dragged;
+  };
+  const topArmLFinal = dragArm("L", topArmL, topIn.cutElapsedLMs !== null || topIn.armExtractedL);
+  const topArmRFinal = dragArm("R", topArmR, topIn.cutElapsedRMs !== null || topIn.armExtractedR);
+  const topDragged: BodyPose = { ...topMid, armL: topArmLFinal, armR: topArmRFinal };
+
+  // 4. Heads track the opponent.
+  const bGaze = lookAt(bottomMid, bFrames, tFrames.headPos);
+  const tGaze = lookAt(topDragged, tFrames, bFrames.headPos);
 
   const bottom: BodyPose = {
-    ...b0,
-    armL: bottomArmL,
-    armR: bottomArmR,
+    ...bottomMid,
     headPitch: bGaze.pitch,
     headYaw: bGaze.yaw,
   };
   const top: BodyPose = {
-    ...topMid,
+    ...topDragged,
     headPitch: tGaze.pitch,
     headYaw: tGaze.yaw,
   };
