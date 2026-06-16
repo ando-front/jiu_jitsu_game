@@ -37,6 +37,8 @@ export type ArmPose = Readonly<{
   elbowBend: number;
   // 0..1 post-smoothing jitter amplitude (grip strain, effort).
   tremor: number;
+  // 0 = open splayed hand, 1 = clenched fist. Omitted ≈ relaxed (0.25).
+  grip?: number;
 }>;
 
 export type LegPose = Readonly<{
@@ -44,6 +46,9 @@ export type LegPose = Readonly<{
   hipYaw: number;
   hipRoll: number;
   kneeBend: number;
+  // Ankle flex: + = plantarflexed (toes point, hooking behind the back),
+  // − = dorsiflexed (ball of the foot framing on the hip). Omitted ≈ 0.
+  ankle?: number;
 }>;
 
 export type BodyPose = Readonly<{
@@ -179,6 +184,7 @@ function armPoseFrom(
           shoulderYaw: rest.yaw,
           elbowBend: rest.elbow + 0.18,
           tremor: 0,
+          grip: 0.1, // hand opens, anticipating the grab
         };
       }
       // Arm shoots out: elbow extends past the contact pose for a visible lunge.
@@ -188,6 +194,7 @@ function armPoseFrom(
         shoulderYaw: reach.yaw,
         elbowBend: reach.elbow * 0.45,
         tremor: 0,
+        grip: 0.0, // splayed open, ready to clamp
       };
     }
     case "CONTACT":
@@ -197,6 +204,7 @@ function armPoseFrom(
         shoulderYaw: reach.yaw,
         elbowBend: reach.elbow,
         tremor: 0.15,
+        grip: 0.55, // fingers wrapping
       };
     case "GRIPPED":
       // Pulling on the grip: elbow flexes in, strain tremor scales with squeeze.
@@ -206,6 +214,7 @@ function armPoseFrom(
         shoulderYaw: reach.yaw,
         elbowBend: reach.elbow + 0.35,
         tremor: 0.25 + clamp01(gripStrength) * 0.45,
+        grip: 0.85 + clamp01(gripStrength) * 0.15, // clenched fist
       };
     case "PARRIED":
       return {
@@ -214,6 +223,7 @@ function armPoseFrom(
         shoulderYaw: PARRIED_ARM.yaw,
         elbowBend: PARRIED_ARM.elbow,
         tremor: 0,
+        grip: 0.1, // knocked open
       };
     default: // IDLE / RETRACT → back to the rest frame.
       return {
@@ -222,6 +232,7 @@ function armPoseFrom(
         shoulderYaw: rest.yaw,
         elbowBend: rest.elbow,
         tremor: 0,
+        grip: 0.3, // relaxed
       };
   }
 }
@@ -351,18 +362,22 @@ function bottomLegPose(footState: string, guard: "CLOSED" | "OPEN", nowMs: numbe
   const unlocked = guard === "OPEN" ? LEG_DIR_OPEN : LEG_DIR_UNLOCKED;
   switch (footState) {
     case "LOCKED":
-      return solveLeg(LEG_DIR_LOCKED.thigh, LEG_DIR_LOCKED.shin);
+      // Feet hooked behind the back → toes pointed hard (plantarflexed).
+      return { ...solveLeg(LEG_DIR_LOCKED.thigh, LEG_DIR_LOCKED.shin), ankle: 0.55 };
     case "LOCKING": {
       // Fighting to close: oscillate between half-closed and nearly-closed
       // so the squeeze effort is visible.
       const mix = 0.6 + Math.sin((nowMs / 1000) * TWO_PI * 3.2) * 0.25;
-      return solveLeg(
-        v3lerp(unlocked.thigh, LEG_DIR_LOCKED.thigh, mix),
-        v3lerp(unlocked.shin, LEG_DIR_LOCKED.shin, mix),
-      );
+      return {
+        ...solveLeg(
+          v3lerp(unlocked.thigh, LEG_DIR_LOCKED.thigh, mix),
+          v3lerp(unlocked.shin, LEG_DIR_LOCKED.shin, mix),
+        ),
+        ankle: 0.2 + mix * 0.3,
+      };
     }
-    default: // UNLOCKED
-      return solveLeg(unlocked.thigh, unlocked.shin);
+    default: // UNLOCKED — ball of the foot framing on the hip → toes up.
+      return { ...solveLeg(unlocked.thigh, unlocked.shin), ankle: -0.35 };
   }
 }
 
@@ -377,6 +392,7 @@ function lerpArm(a: ArmPose, b: ArmPose, t: number): ArmPose {
     shoulderYaw: lerp(a.shoulderYaw, b.shoulderYaw, t),
     elbowBend: lerp(a.elbowBend, b.elbowBend, t),
     tremor: lerp(a.tremor, b.tremor, t),
+    grip: lerp(a.grip ?? 0.25, b.grip ?? 0.25, t),
   };
 }
 
@@ -386,6 +402,7 @@ function lerpLeg(a: LegPose, b: LegPose, t: number): LegPose {
     hipYaw: lerp(a.hipYaw, b.hipYaw, t),
     hipRoll: lerp(a.hipRoll, b.hipRoll, t),
     kneeBend: lerp(a.kneeBend, b.kneeBend, t),
+    ankle: lerp(a.ankle ?? 0, b.ankle ?? 0, t),
   };
 }
 
@@ -395,12 +412,14 @@ const mkArm = (
   yaw: number,
   elbow: number,
   tremor = 0,
+  grip = 0.25,
 ): ArmPose => ({
   shoulderPitch: pitch,
   shoulderRoll: roll,
   shoulderYaw: yaw,
   elbowBend: elbow,
   tremor,
+  grip,
 });
 
 // Grip-cut chop (defender, §4.2): raise out, swat across the centre line,
@@ -618,8 +637,8 @@ export function computeFinishPoses(kind: FinishKind, tMs: number): FinishPoses {
       bottom.torsoPitch = 0.45;
       bottom.legR = solveLeg([0.18, -0.50, 0.85], [-0.90, -0.25, -0.35]);
       bottom.legL = solveLeg([0.35, -0.55, 0.76], [-0.70, -0.50, -0.50]);
-      bottom.armL = mkArm(-0.70, 0.10, -0.15, 1.05 + squeeze * 0.08, 0.5);
-      bottom.armR = mkArm(-0.70, 0.10, -0.15, 1.05 + squeeze * 0.08, 0.5);
+      bottom.armL = mkArm(-0.70, 0.10, -0.15, 1.05 + squeeze * 0.08, 0.5, 0.9);
+      bottom.armR = mkArm(-0.70, 0.10, -0.15, 1.05 + squeeze * 0.08, 0.5, 0.9);
       top.pelvisY = 0.42;
       top.pelvisZ = 0.18;
       top.torsoPitch = 0.85;
@@ -656,8 +675,8 @@ export function computeFinishPoses(kind: FinishKind, tMs: number): FinishPoses {
       bottom.headPitch = 0.75;
       bottom.legR = solveLeg([0.40, -0.70, 0.35], [-0.50, -0.80, -0.10]);
       bottom.legL = solveLeg([0.10, -0.95, 0.15], [0.10, -0.90, -0.30]);
-      bottom.armL = mkArm(-0.70, 0.10, -0.10, 0.90, 0.3);
-      bottom.armR = mkArm(-0.70, 0.10, -0.10, 0.90, 0.3);
+      bottom.armL = mkArm(-0.70, 0.10, -0.10, 0.90, 0.3, 0.9);
+      bottom.armR = mkArm(-0.70, 0.10, -0.10, 0.90, 0.3, 0.9);
       top.pelvisX = 0.50;
       top.pelvisY = 0.28;
       top.pelvisRoll = 1.30;
@@ -677,8 +696,8 @@ export function computeFinishPoses(kind: FinishKind, tMs: number): FinishPoses {
       bottom.headPitch = 0.75;
       bottom.legL = solveLeg([0.50, -0.40, 0.75], [-0.60, -0.60, -0.30]);
       bottom.legR = solveLeg([0.10, -0.95, 0.15], [0.10, -0.90, -0.30]);
-      bottom.armL = mkArm(-0.70, 0.10, -0.10, 0.90, 0.3);
-      bottom.armR = mkArm(-0.70, 0.10, -0.10, 0.90, 0.3);
+      bottom.armL = mkArm(-0.70, 0.10, -0.10, 0.90, 0.3, 0.9);
+      bottom.armR = mkArm(-0.70, 0.10, -0.10, 0.90, 0.3, 0.9);
       top.pelvisX = -0.50;
       top.pelvisY = 0.28;
       top.pelvisRoll = -1.30;
@@ -713,8 +732,8 @@ export function computeFinishPoses(kind: FinishKind, tMs: number): FinishPoses {
     case "CROSS_COLLAR": {
       // Wrists crossed deep in the collar; defender slumped over the choke.
       bottom.torsoPitch = 0.60;
-      bottom.armL = mkArm(-0.80, 0.05, -0.55, 0.85 + squeeze * 0.06, 0.6);
-      bottom.armR = mkArm(-0.80, 0.05, -0.55, 0.85 + squeeze * 0.06, 0.6);
+      bottom.armL = mkArm(-0.80, 0.05, -0.55, 0.85 + squeeze * 0.06, 0.6, 0.9);
+      bottom.armR = mkArm(-0.80, 0.05, -0.55, 0.85 + squeeze * 0.06, 0.6, 0.9);
       top.pelvisY = 0.44;
       top.pelvisZ = 0.12;
       top.torsoPitch = 0.70;
@@ -791,8 +810,8 @@ export function computeFinishPoses(kind: FinishKind, tMs: number): FinishPoses {
       bottom.headPitch = 0.35;
       bottom.legR = solveLeg([-0.55, -0.70, 0.20], [-0.30, -0.85, -0.20]);
       bottom.legL = solveLeg([0.60, -0.75, 0.15], [0.30, -0.90, -0.15]);
-      bottom.armL = mkArm(-0.75, 0.15, -0.20, 0.70, 0.2);
-      bottom.armR = mkArm(-0.60, 0.20, -0.35, 0.55, 0.2);
+      bottom.armL = mkArm(-0.75, 0.15, -0.20, 0.70, 0.2, 0.9);
+      bottom.armR = mkArm(-0.60, 0.20, -0.35, 0.55, 0.2, 0.9);
       top.pelvisX = 0.50;
       top.pelvisY = 0.38;
       top.pelvisZ = 0.30;
@@ -1073,6 +1092,7 @@ function solveArmIK(
   torsoRot: M3,
   sideSign: number,
   baseTremor: number,
+  grip = 0.25,
 ): ArmPose {
   const a = RIG_DIMS.upperArm;
   const b = RIG_DIMS.foreArm;
@@ -1126,6 +1146,7 @@ function solveArmIK(
     shoulderRoll: roll * sideSign,
     elbowBend,
     tremor: baseTremor,
+    grip,
   };
 }
 
@@ -1158,7 +1179,7 @@ function ikArm(
     const len = v3len(toChest);
     if (len > 1e-6) target = v3add(anchor, v3scale(toChest, Math.min(0.06, len) / len));
   }
-  return solveArmIK(target, shoulder, ownFrames.torsoRot, sideSign, cannedArm.tremor);
+  return solveArmIK(target, shoulder, ownFrames.torsoRot, sideSign, cannedArm.tremor, cannedArm.grip);
 }
 
 // Gaze: aim the head's face (+z when neutral) at the opponent's head.
@@ -1241,6 +1262,7 @@ export function computeScenePoses(
       tFrames.torsoRot,
       side === "L" ? -1 : 1,
       Math.max(current.tremor, 0.3), // fighting the grip
+      0.15, // hand pried open by the grip
     );
     return dragged;
   };

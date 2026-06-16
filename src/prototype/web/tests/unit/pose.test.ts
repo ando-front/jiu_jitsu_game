@@ -469,3 +469,33 @@ describe("second realism pass — anticipation, reaction, coupling", () => {
     expect(extracted.pelvisRoll).toBeLessThan(idle.pelvisRoll);
   });
 });
+
+describe("Tier 2 — hand grip and ankle articulation", () => {
+  it("the hand opens to reach and clenches to a fist when gripping", () => {
+    const reaching = computeBottomPose(
+      bottomInput({ leftHand: { state: "REACHING", target: "COLLAR_L", sinceMs: 400 } }),
+    );
+    const gripped = computeBottomPose(
+      bottomInput({ leftHand: { state: "GRIPPED", target: "COLLAR_L" }, gripStrengthL: 1 }),
+    );
+    expect(reaching.armL.grip!).toBeLessThan(0.2); // splayed open
+    expect(gripped.armL.grip!).toBeGreaterThan(0.9); // clenched
+  });
+
+  it("a planted IK grip keeps its clenched hand", () => {
+    const poses = computeScenePoses(
+      bottomInput({ rightHand: { state: "GRIPPED", target: "SLEEVE_L" }, gripStrengthR: 1 }),
+      topInput(),
+    );
+    expect(poses.bottom.armR.grip!).toBeGreaterThan(0.85);
+  });
+
+  it("locked feet plantarflex (hook) while framing feet dorsiflex", () => {
+    const locked = computeBottomPose(bottomInput());
+    const framing = computeBottomPose(
+      bottomInput({ leftFootState: "UNLOCKED", rightFootState: "UNLOCKED" }),
+    );
+    expect(locked.legR.ankle!).toBeGreaterThan(0.3); // toes pointed, hooking
+    expect(framing.legR.ankle!).toBeLessThan(0); // ball of foot, toes up
+  });
+});
