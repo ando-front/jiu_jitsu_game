@@ -592,6 +592,33 @@ export function computeBottomPose(input: BottomPoseInput): BodyPose {
   };
 }
 
+// Balance recovery: when the defender is broken down hard and the relevant
+// hand is free, they throw it out to post on the mat and catch themselves.
+// Returns the posting side and a 0..1 commitment, or null. Shared by
+// computeTopPose (canned reaching-out arm) and computeScenePoses (mat IK).
+export function balancePost(
+  input: TopPoseInput,
+): { side: "L" | "R"; t: number } | null {
+  const pbMag = Math.hypot(input.postureBreakX, input.postureBreakY);
+  if (pbMag < 0.5) return null;
+  const side: "L" | "R" = input.postureBreakX >= 0 ? "R" : "L";
+  const busy = (h: LimbSnapshot, extracted: boolean, cut: number | null): boolean =>
+    extracted || cut !== null || h.state === "CONTACT" || h.state === "GRIPPED";
+  if (side === "L" && busy(input.leftHand, input.armExtractedL, input.cutElapsedLMs)) return null;
+  if (side === "R" && busy(input.rightHand, input.armExtractedR, input.cutElapsedRMs)) return null;
+  return { side, t: clamp01((pbMag - 0.5) / 0.4) };
+}
+
+// Canned reaching-out post arm (used before IK / in headless preview).
+const POST_ARM: ArmPose = Object.freeze({
+  shoulderPitch: 0.15,
+  shoulderRoll: 0.65, // swung out to the side
+  shoulderYaw: 0.1,
+  elbowBend: 0.18, // nearly straight, bracing
+  tremor: 0.2,
+  grip: 0.0, // flat palm on the mat
+});
+
 export function computeTopPose(input: TopPoseInput): BodyPose {
   const fatigue = clamp01(1 - input.stamina);
   const breathHz = 0.28 + fatigue * 0.55;
@@ -618,6 +645,13 @@ export function computeTopPose(input: TopPoseInput): BodyPose {
   // A grip cut overrides the hand FSM read for the chopping arm.
   if (input.cutElapsedLMs !== null) armL = cutChopArm(armL, input.cutElapsedLMs);
   if (input.cutElapsedRMs !== null) armR = cutChopArm(armR, input.cutElapsedRMs);
+
+  // Balance recovery: throw the free hand out to post on the mat.
+  const post = balancePost(input);
+  if (post !== null) {
+    if (post.side === "L") armL = lerpArm(armL, POST_ARM, post.t);
+    else armR = lerpArm(armR, POST_ARM, post.t);
+  }
 
   // Kneeling combat base; weight intent rocks the hips, posture break drags
   // the whole pelvis toward the attacker.
@@ -1312,7 +1346,21 @@ export function computeScenePoses(
     topIn.cutElapsedRMs !== null || topIn.armExtractedR
       ? t0.armR
       : ikArm(topIn.rightHand, t0.armR, "base", bFrames0, tFrames0, "R");
-  const topMid: BodyPose = { ...t0, armL: topArmL, armR: topArmR };
+
+  // Balance post: plant the recovering hand flat on the mat (y≈0) out to
+  // the side, instead of leaving it on the canned reaching-out angle.
+  const post = balancePost(topIn);
+  let topArmLPosted = topArmL;
+  let topArmRPosted = topArmR;
+  if (post !== null) {
+    const sideSign = post.side === "L" ? -1 : 1;
+    const shoulder = post.side === "L" ? tFrames0.shoulderL : tFrames0.shoulderR;
+    const matPoint: V3 = [shoulder[0] + sideSign * 0.18, 0.04, shoulder[2] + 0.06];
+    const planted = solveArmIK(matPoint, shoulder, tFrames0.torsoRot, sideSign, 0.2, 0.0);
+    if (post.side === "L") topArmLPosted = lerpArm(topArmL, planted, post.t);
+    else topArmRPosted = lerpArm(topArmR, planted, post.t);
+  }
+  const topMid: BodyPose = { ...t0, armL: topArmLPosted, armR: topArmRPosted };
 
   // 2. Attacker hands plant on the *final* defender frame, so sleeve/wrist
   //    grips track the defender's actual hands.
@@ -1358,8 +1406,17 @@ export function computeScenePoses(
     );
     return dragged;
   };
-  const topArmLFinal = dragArm("L", topArmL, topIn.cutElapsedLMs !== null || topIn.armExtractedL);
-  const topArmRFinal = dragArm("R", topArmR, topIn.cutElapsedRMs !== null || topIn.armExtractedR);
+  // A posting hand is committed to the mat — never re-purpose it as a drag.
+  const topArmLFinal = dragArm(
+    "L",
+    topArmLPosted,
+    topIn.cutElapsedLMs !== null || topIn.armExtractedL || post?.side === "L",
+  );
+  const topArmRFinal = dragArm(
+    "R",
+    topArmRPosted,
+    topIn.cutElapsedRMs !== null || topIn.armExtractedR || post?.side === "R",
+  );
   const topDragged: BodyPose = { ...topMid, armL: topArmLFinal, armR: topArmRFinal };
 
   // 4. Heads track the opponent.
