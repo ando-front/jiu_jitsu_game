@@ -203,21 +203,35 @@ function handBusyState(h: LimbSnapshot): boolean {
   return h.state === "REACHING" || h.state === "CONTACT" || h.state === "GRIPPED";
 }
 
+// Deterministic [0,1) hash — same action-start time always yields the same
+// "style", but different occurrences differ. Cheap fract(sin) noise.
+function hash01(x: number): number {
+  const s = Math.sin(x * 0.0173 + 1.0) * 43758.5453;
+  return s - Math.floor(s);
+}
+
 function armPoseFrom(
   hand: LimbSnapshot,
   table: Readonly<Record<string, ReachTarget>>,
   rest: ReachTarget,
   gripStrength: number,
+  nowMs: number,
 ): ArmPose {
   const zone = hand.target !== null ? table[hand.target] : undefined;
   const reach = zone ?? rest;
+  const sinceMs = hand.sinceMs ?? 1000;
+  // Per-action style seed, stable for this state instance. Two unit-centred
+  // variations in [-1, 1] so each reach/grip looks a little different.
+  const startMs = nowMs - sinceMs;
+  const styleA = hash01(startMs) * 2 - 1;
+  const styleB = hash01(startMs + 137) * 2 - 1;
   switch (hand.state) {
     case "REACHING": {
       // Anticipation: the first beat of a reach pulls *back* (elbow coils,
       // shoulder loads past the rest frame); the spring then whips the arm
-      // out to the extended lunge target.
-      const sinceMs = hand.sinceMs ?? 1000;
-      if (sinceMs < 110) {
+      // out to the extended lunge target. Windup length varies per attempt.
+      const windupMs = 110 + styleA * 25; // 85–135 ms
+      if (sinceMs < windupMs) {
         return {
           shoulderPitch: rest.pitch + 0.20,
           shoulderRoll: rest.roll + 0.10,
@@ -227,12 +241,13 @@ function armPoseFrom(
           grip: 0.1, // hand opens, anticipating the grab
         };
       }
-      // Arm shoots out: elbow extends past the contact pose for a visible lunge.
+      // Arm shoots out: elbow extends past the contact pose for a visible
+      // lunge. Roll/yaw/extension jitter so no two reaches trace one line.
       return {
-        shoulderPitch: reach.pitch,
-        shoulderRoll: reach.roll,
-        shoulderYaw: reach.yaw,
-        elbowBend: reach.elbow * 0.45,
+        shoulderPitch: reach.pitch + styleB * 0.05,
+        shoulderRoll: reach.roll + styleA * 0.08,
+        shoulderYaw: reach.yaw + styleB * 0.10,
+        elbowBend: reach.elbow * (0.45 + styleA * 0.12),
         tremor: 0,
         grip: 0.0, // splayed open, ready to clamp
       };
@@ -240,22 +255,28 @@ function armPoseFrom(
     case "CONTACT":
       return {
         shoulderPitch: reach.pitch,
-        shoulderRoll: reach.roll,
-        shoulderYaw: reach.yaw,
+        shoulderRoll: reach.roll + styleA * 0.05,
+        shoulderYaw: reach.yaw + styleB * 0.06,
         elbowBend: reach.elbow,
         tremor: 0.15,
         grip: 0.55, // fingers wrapping
       };
-    case "GRIPPED":
-      // Pulling on the grip: elbow flexes in, strain tremor scales with squeeze.
+    case "GRIPPED": {
+      // Pulling on the grip: elbow flexes in, strain tremor scales with
+      // squeeze. A slow re-grip "pump" keeps the held grip alive — the
+      // constant micro-adjustment of fighting for the pull. Phase + rate
+      // vary per grip instance.
+      const pumpHz = 0.7 + (styleB * 0.5 + 0.5) * 0.6; // 0.7–1.3 Hz
+      const pump = Math.sin((nowMs / 1000) * TWO_PI * pumpHz + styleA * Math.PI);
       return {
         shoulderPitch: reach.pitch + 0.10,
         shoulderRoll: reach.roll,
         shoulderYaw: reach.yaw,
-        elbowBend: reach.elbow + 0.35,
+        elbowBend: reach.elbow + 0.35 + pump * 0.07,
         tremor: 0.25 + clamp01(gripStrength) * 0.45,
         grip: 0.85 + clamp01(gripStrength) * 0.15, // clenched fist
       };
+    }
     case "PARRIED":
       return {
         shoulderPitch: PARRIED_ARM.pitch,
@@ -633,11 +654,11 @@ export function computeBottomPose(input: BottomPoseInput): BodyPose {
     headYaw: input.hipAngle * 0.3 + headScan,
     breath,
     armL: handBusy(input.leftHand)
-      ? armPoseFrom(input.leftHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthL)
-      : entry.armL ?? armPoseFrom(input.leftHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthL),
+      ? armPoseFrom(input.leftHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthL, input.nowMs)
+      : entry.armL ?? armPoseFrom(input.leftHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthL, input.nowMs),
     armR: handBusy(input.rightHand)
-      ? armPoseFrom(input.rightHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthR)
-      : entry.armR ?? armPoseFrom(input.rightHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthR),
+      ? armPoseFrom(input.rightHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthR, input.nowMs)
+      : entry.armR ?? armPoseFrom(input.rightHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthR, input.nowMs),
     legL: shuffleLeg(entry.legL ?? bottomLegPose(input.leftFootState, input.guard, input.nowMs), shuffleSqueeze),
     legR: shuffleLeg(entry.legR ?? bottomLegPose(input.rightFootState, input.guard, input.nowMs), shuffleSqueeze),
   };
@@ -704,10 +725,10 @@ export function computeTopPose(input: TopPoseInput): BodyPose {
 
   let armL = input.armExtractedL
     ? mkArm(EXTRACTED_ARM.pitch, EXTRACTED_ARM.roll, EXTRACTED_ARM.yaw, EXTRACTED_ARM.elbow, 0.25)
-    : armPoseFrom(input.leftHand, DEFENSE_ZONE_REACH, DEFENSE_REST, 0.5);
+    : armPoseFrom(input.leftHand, DEFENSE_ZONE_REACH, DEFENSE_REST, 0.5, input.nowMs);
   let armR = input.armExtractedR
     ? mkArm(EXTRACTED_ARM.pitch, EXTRACTED_ARM.roll, EXTRACTED_ARM.yaw, EXTRACTED_ARM.elbow, 0.25)
-    : armPoseFrom(input.rightHand, DEFENSE_ZONE_REACH, DEFENSE_REST, 0.5);
+    : armPoseFrom(input.rightHand, DEFENSE_ZONE_REACH, DEFENSE_REST, 0.5, input.nowMs);
   // A grip cut overrides the hand FSM read for the chopping arm.
   if (input.cutElapsedLMs !== null) armL = cutChopArm(armL, input.cutElapsedLMs);
   if (input.cutElapsedRMs !== null) armR = cutChopArm(armR, input.cutElapsedRMs);

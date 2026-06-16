@@ -617,3 +617,33 @@ describe("Tier 5 — motion variation (alive idle)", () => {
     expect(Math.abs(v0 + vHalf)).toBeGreaterThan(1e-3); // not exact negatives
   });
 });
+
+describe("Tier 6 — execution-style variation (no two reps identical)", () => {
+  it("two reaches that started at different times lunge along different lines", () => {
+    const a = computeBottomPose(
+      bottomInput({ nowMs: 500, leftHand: { state: "REACHING", target: "COLLAR_L", sinceMs: 200 } }),
+    );
+    const b = computeBottomPose(
+      bottomInput({ nowMs: 900, leftHand: { state: "REACHING", target: "COLLAR_L", sinceMs: 200 } }),
+    );
+    // Same action, different occurrence → different shoulder roll / yaw.
+    const differs =
+      Math.abs(a.armL.shoulderRoll - b.armL.shoulderRoll) > 1e-3 ||
+      Math.abs(a.armL.shoulderYaw - b.armL.shoulderYaw) > 1e-3;
+    expect(differs).toBe(true);
+  });
+
+  it("a held grip keeps re-pumping (elbow flexes a little over time)", () => {
+    const grip = { state: "GRIPPED", target: "COLLAR_L", sinceMs: 1000 } as const;
+    const a = computeBottomPose(bottomInput({ nowMs: 0, leftHand: grip, gripStrengthL: 1 }));
+    const b = computeBottomPose(bottomInput({ nowMs: 450, leftHand: grip, gripStrengthL: 1 }));
+    expect(a.armL.elbowBend).not.toBeCloseTo(b.armL.elbowBend, 4);
+  });
+
+  it("style is still deterministic for an identical instant (reproducible)", () => {
+    const reach = { state: "REACHING", target: "SLEEVE_R", sinceMs: 300 } as const;
+    const a = computeBottomPose(bottomInput({ nowMs: 1234, rightHand: reach }));
+    const b = computeBottomPose(bottomInput({ nowMs: 1234, rightHand: reach }));
+    expect(a.armR).toEqual(b.armR);
+  });
+})
