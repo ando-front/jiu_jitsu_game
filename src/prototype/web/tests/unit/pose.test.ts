@@ -499,3 +499,44 @@ describe("Tier 2 — hand grip and ankle articulation", () => {
     expect(framing.legR.ankle!).toBeLessThan(0); // ball of foot, toes up
   });
 });
+
+describe("Tier 3 — technique-specific window entry", () => {
+  it("a triangle window raises the hips and climbs the near leg vs a plain window", () => {
+    const plain = computeBottomPose(bottomInput({ windowOpen: true }));
+    const tri = computeBottomPose(bottomInput({ windowOpen: true, windowTechnique: "TRIANGLE" }));
+    expect(tri.pelvisY).toBeGreaterThan(plain.pelvisY);
+    const triShin = legDirections(tri.legL).shin;
+    const plainShin = legDirections(plain.legL).shin;
+    expect(triShin[2]).toBeGreaterThan(plainShin[2]); // shin swings higher/over
+  });
+
+  it("a hip-bump window sits the attacker up and posts a hand behind", () => {
+    const plain = computeBottomPose(bottomInput({ windowOpen: true }));
+    const hb = computeBottomPose(bottomInput({ windowOpen: true, windowTechnique: "HIP_BUMP" }));
+    expect(hb.torsoPitch).toBeGreaterThan(plain.torsoPitch + 0.3); // big sit-up
+    expect(hb.armR.shoulderPitch).toBeGreaterThan(0); // posting arm reaches back
+  });
+
+  it("the omoplata window turns the hips out", () => {
+    const omo = computeBottomPose(bottomInput({ windowOpen: true, windowTechnique: "OMOPLATA" }));
+    expect(Math.abs(omo.pelvisYaw)).toBeGreaterThan(0.3);
+  });
+
+  it("the entry only fires while the window is open", () => {
+    const closed = computeBottomPose(bottomInput({ windowOpen: false, windowTechnique: "TRIANGLE" }));
+    const idle = computeBottomPose(bottomInput());
+    expect(closed.pelvisY).toBeCloseTo(idle.pelvisY, 6);
+  });
+
+  it("an engaged grip keeps its grip pose instead of the entry's framing arm", () => {
+    const pose = computeBottomPose(
+      bottomInput({
+        windowOpen: true,
+        windowTechnique: "CROSS_COLLAR",
+        leftHand: { state: "GRIPPED", target: "COLLAR_L" },
+        gripStrengthL: 1,
+      }),
+    );
+    expect(pose.armL.grip!).toBeGreaterThan(0.9); // live grip, not the canned 0.85
+  });
+});

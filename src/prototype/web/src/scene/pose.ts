@@ -91,6 +91,10 @@ export type BottomPoseInput = Readonly<{
   gripStrengthR: number;
   // Judgment window OPEN/OPENING — the attacker coils, loading the hips.
   windowOpen: boolean;
+  // Leading judgment-window candidate (or null). When the window is open,
+  // the attacker loads the *specific* entry for this technique — hips climb
+  // for a triangle, turn out for an omoplata, sit up for a hip bump, etc.
+  windowTechnique?: Technique | null;
 }>;
 
 export type TopPoseInput = Readonly<{
@@ -445,6 +449,78 @@ function isActiveHigh(hand: LimbSnapshot): boolean {
   return hand.state === "REACHING" || hand.state === "CONTACT" || hand.state === "GRIPPED";
 }
 
+// Technique-specific entry "loading" the attacker shows while the judgment
+// window is open — a partial pre-shape of the finish, smoothed by the rig
+// springs. Deltas are added on top of the live pose; legs are full overrides
+// where the entry redefines the leg shape (returned via legL/legR), else
+// null to keep the FSM-driven guard legs.
+type WindowEntry = Readonly<{
+  pelvisY?: number;
+  pelvisRoll?: number;
+  pelvisYaw?: number;
+  torsoPitch?: number;
+  torsoRoll?: number;
+  legL?: LegPose;
+  legR?: LegPose;
+  armL?: ArmPose;
+  armR?: ArmPose;
+}>;
+
+function windowEntry(tech: Technique): WindowEntry {
+  switch (tech) {
+    case "TRIANGLE":
+      // Hips climb, the near leg rides up toward the shoulder line, hands
+      // reach to frame the head.
+      return {
+        pelvisY: 0.06,
+        torsoPitch: 0.18,
+        // Near leg climbs up over the shoulder line: thigh & shin both lift
+        // toward the chest-front (+z) instead of wrapping low behind.
+        legL: { ...solveLeg([0.22, -0.45, 0.86], [-0.78, -0.30, 0.08]), ankle: 0.4 },
+        armL: mkArm(-0.65, 0.12, -0.14, 0.85, 0.3, 0.6),
+        armR: mkArm(-0.65, 0.12, -0.14, 0.85, 0.3, 0.6),
+      };
+    case "OMOPLATA":
+      // Hips turn out, the far leg starts swinging over the shoulder.
+      return {
+        pelvisYaw: 0.45,
+        torsoPitch: 0.10,
+        legL: { ...solveLeg([-0.20, -0.55, 0.78], [-0.55, -0.62, -0.30]), ankle: 0.3 },
+      };
+    case "HIP_BUMP":
+      // Post a hand back and start sitting up hard.
+      return {
+        pelvisY: 0.08,
+        torsoPitch: 0.55,
+        armR: mkArm(0.45, 0.30, 0, 0.20, 0, 0.2), // posting hand behind
+        armL: mkArm(-0.90, 0.25, -0.10, 0.45, 0.2, 0.7),
+      };
+    case "CROSS_COLLAR":
+      // Both hands drive deep to the collar, chest curls in.
+      return {
+        torsoPitch: 0.22,
+        armL: mkArm(-0.80, 0.06, -0.45, 0.70, 0.3, 0.85),
+        armR: mkArm(-0.80, 0.06, -0.45, 0.70, 0.3, 0.85),
+      };
+    case "SCISSOR_SWEEP":
+      // Load to one side: knee across, hips cocked, sleeve pull.
+      return {
+        pelvisRoll: 0.18,
+        torsoRoll: 0.14,
+        legR: { ...solveLeg([0.55, -0.60, 0.45], [-0.30, -0.80, -0.20]), ankle: -0.1 },
+      };
+    case "FLOWER_SWEEP":
+      // Hips swing under, far arm reaches across for the leg.
+      return {
+        pelvisRoll: -0.18,
+        torsoRoll: -0.14,
+        armR: mkArm(-0.40, 0.30, -0.45, 0.50, 0.2, 0.4),
+      };
+    default:
+      return {};
+  }
+}
+
 // -----------------------------------------------------------------------------
 
 export function computeBottomPose(input: BottomPoseInput): BodyPose {
@@ -474,29 +550,45 @@ export function computeBottomPose(input: BottomPoseInput): BodyPose {
   };
   const reachTwist = reachTwistFor(input.leftHand, -1) + reachTwistFor(input.rightHand, 1);
 
+  // Technique-specific window entry: only while the window is open and a
+  // candidate is named. Engaged hands keep their reach/grip pose (so a live
+  // grip isn't overwritten by the entry's framing arms).
+  const entry: WindowEntry =
+    input.windowOpen && input.windowTechnique != null
+      ? windowEntry(input.windowTechnique)
+      : {};
+  const handBusy = (h: LimbSnapshot): boolean =>
+    h.state === "REACHING" || h.state === "CONTACT" || h.state === "GRIPPED";
+
   return {
     pelvisX: input.hipLateral * 0.20 + sway * 0.012,
-    pelvisY: 0.26 + (legsLocked ? 0.05 : 0) + Math.abs(input.hipPush) * 0.03 + coil * 0.04,
+    pelvisY:
+      0.26 + (legsLocked ? 0.05 : 0) + Math.abs(input.hipPush) * 0.03 + coil * 0.04 +
+      (entry.pelvisY ?? 0),
     pelvisZ: input.hipPush * 0.30 + sway2 * 0.008,
     // Supine: −π/2 lays the body flat with the chest facing up and (after
     // the rig's yaw flip) the head toward the camera; the small addition
     // keeps the shoulders just off the mat.
     pelvisPitch: -Math.PI / 2 + 0.15,
-    pelvisYaw: input.hipAngle,
-    pelvisRoll: input.hipLateral * 0.25,
+    pelvisYaw: input.hipAngle + (entry.pelvisYaw ?? 0),
+    pelvisRoll: input.hipLateral * 0.25 + (entry.pelvisRoll ?? 0),
     // Positive pitch curls the chest up toward the opponent (supine front
     // = world up); fatigue sags it back toward the mat.
-    torsoPitch: 0.20 + sitUp * 0.7 + coil * 0.10 + breath * 0.04 - fatigue * 0.15,
+    torsoPitch: 0.20 + sitUp * 0.7 + coil * 0.10 + breath * 0.04 - fatigue * 0.15 + (entry.torsoPitch ?? 0),
     torsoYaw: input.hipAngle * 0.35 + sway2 * 0.02 + reachTwist,
-    torsoRoll: input.hipLateral * 0.18 + sway * 0.015,
+    torsoRoll: input.hipLateral * 0.18 + sway * 0.015 + (entry.torsoRoll ?? 0),
     torsoTremor: 0,
     headPitch: 0.45 + sitUp * 0.4 - fatigue * 0.35 + breath * 0.02,
     headYaw: input.hipAngle * 0.3,
     breath,
-    armL: armPoseFrom(input.leftHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthL),
-    armR: armPoseFrom(input.rightHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthR),
-    legL: bottomLegPose(input.leftFootState, input.guard, input.nowMs),
-    legR: bottomLegPose(input.rightFootState, input.guard, input.nowMs),
+    armL: handBusy(input.leftHand)
+      ? armPoseFrom(input.leftHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthL)
+      : entry.armL ?? armPoseFrom(input.leftHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthL),
+    armR: handBusy(input.rightHand)
+      ? armPoseFrom(input.rightHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthR)
+      : entry.armR ?? armPoseFrom(input.rightHand, ATTACK_ZONE_REACH, ATTACK_REST, input.gripStrengthR),
+    legL: entry.legL ?? bottomLegPose(input.leftFootState, input.guard, input.nowMs),
+    legR: entry.legR ?? bottomLegPose(input.rightFootState, input.guard, input.nowMs),
   };
 }
 

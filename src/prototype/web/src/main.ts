@@ -910,6 +910,7 @@ function applyToScene(g: GameState) {
     gripStrengthL: intent.grip.l_grip_strength,
     gripStrengthR: intent.grip.r_grip_strength,
     windowOpen: g.judgmentWindow.state === "OPEN" || g.judgmentWindow.state === "OPENING",
+    windowTechnique: g.judgmentWindow.candidates[0] ?? null,
   }, {
     nowMs: g.nowMs,
     stamina: g.top.stamina,

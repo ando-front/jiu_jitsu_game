@@ -205,6 +205,16 @@ const SCENES: SceneSpec[] = [
     bottom: { leftHand: { state: "GRIPPED", target: "COLLAR_R" }, gripStrengthL: 1 },
     top: { cutElapsedRMs: 450 },
   },
+  {
+    name: "12_window_triangle_entry",
+    bottom: { windowOpen: true, windowTechnique: "TRIANGLE" },
+    top: { postureBreakY: 0.5 },
+  },
+  {
+    name: "13_window_hipbump_entry",
+    bottom: { windowOpen: true, windowTechnique: "HIP_BUMP" },
+    top: {},
+  },
   { name: "08_finish_triangle", bottom: {}, top: {}, finish: { kind: "TRIANGLE", tMs: 400 } },
   { name: "09_finish_scissor_sweep", bottom: {}, top: {}, finish: { kind: "SCISSOR_SWEEP", tMs: 400 } },
   { name: "10_finish_hip_bump", bottom: {}, top: {}, finish: { kind: "HIP_BUMP", tMs: 400 } },
