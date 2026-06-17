@@ -309,5 +309,92 @@ namespace BJJSimulator.Tests
                 0f, 0f, 1.0f, 1.0472f, -0.6f, 1.1f, out _, out float clamped);
             Assert.That(clamped, Is.EqualTo(1.0472f).Within(1e-4f));
         }
+
+        // --- Realism helpers (Tier 8) -----------------------------------------
+
+        [Test]
+        public void IntegrateSpring_UnderdampedOvershoots_CriticalDoesNot()
+        {
+            // Step the target from 0 → 1 and watch the peak. zeta 0.4 (the
+            // secondary-motion oscillator) must overshoot past 1; zeta 1.0
+            // (pelvis tuning) must not.
+            float xU = 0f, vU = 0f, peakU = 0f;
+            float xC = 0f, vC = 0f, peakC = 0f;
+            for (int i = 0; i < 240; i++) // 4 s @ 60 fps
+            {
+                BJJPose.IntegrateSpring(ref xU, ref vU, 1f, 8f, 0.4f, 1f / 60f);
+                BJJPose.IntegrateSpring(ref xC, ref vC, 1f, 8f, 1.0f, 1f / 60f);
+                if (xU > peakU) peakU = xU;
+                if (xC > peakC) peakC = xC;
+            }
+            Assert.That(peakU, Is.GreaterThan(1.02f), "underdamped should overshoot");
+            Assert.That(peakC, Is.LessThan(1.01f), "critical should not overshoot");
+            // Both settle on the target.
+            Assert.That(xU, Is.EqualTo(1f).Within(1e-2f));
+            Assert.That(xC, Is.EqualTo(1f).Within(1e-2f));
+        }
+
+        [Test]
+        public void SpineSCurve_PreservesSumAndShapesByRound()
+        {
+            // Sum is preserved for any round (chest lands where single-bone FK
+            // put it).
+            BJJPose.SpineSCurve(0.6f, 0.5f, out float lo, out float mid, out float up);
+            Assert.That(lo + mid + up, Is.EqualTo(0.6f).Within(1e-5f));
+
+            // round = 0 → even split.
+            BJJPose.SpineSCurve(0.6f, 0f, out float a, out float b, out float c);
+            Assert.That(a, Is.EqualTo(0.2f).Within(1e-5f));
+            Assert.That(a, Is.EqualTo(b).Within(1e-5f));
+            Assert.That(b, Is.EqualTo(c).Within(1e-5f));
+
+            // round > 0 rounds the upper back forward (upper > lower).
+            Assert.That(up, Is.GreaterThan(lo));
+            // round < 0 extends a tall passer spine (upper < lower).
+            BJJPose.SpineSCurve(0.6f, -0.5f, out float lo2, out _, out float up2);
+            Assert.That(up2, Is.LessThan(lo2));
+        }
+
+        [Test]
+        public void FingerCurl_MonotonicAndProgressive()
+        {
+            // Open hand: no curl. Fist: all knuckles fold.
+            Assert.That(BJJPose.FingerCurl(0f, 0), Is.EqualTo(0f).Within(1e-6f));
+            Assert.That(BJJPose.FingerCurl(1f, 0), Is.GreaterThan(1f));
+            // Monotonic in grip.
+            Assert.That(BJJPose.FingerCurl(0.7f, 1), Is.GreaterThan(BJJPose.FingerCurl(0.3f, 1)));
+            // PIP folds further than the MCP and DIP at a full fist.
+            Assert.That(BJJPose.FingerCurl(1f, 1), Is.GreaterThan(BJJPose.FingerCurl(1f, 0)));
+            Assert.That(BJJPose.FingerCurl(1f, 1), Is.GreaterThan(BJJPose.FingerCurl(1f, 2)));
+            // Out-of-range joint index is clamped, not thrown.
+            Assert.That(BJJPose.FingerCurl(1f, 9), Is.EqualTo(BJJPose.FingerCurl(1f, 2)).Within(1e-6f));
+        }
+
+        [Test]
+        public void AnticipationOffset_ReverseBumpThenZero()
+        {
+            // Zero at the boundaries, negative (reverse) inside, peak at midpoint.
+            Assert.That(BJJPose.AnticipationOffset(0f, 120f, 0.05f), Is.EqualTo(0f));
+            Assert.That(BJJPose.AnticipationOffset(120f, 120f, 0.05f), Is.EqualTo(0f));
+            Assert.That(BJJPose.AnticipationOffset(200f, 120f, 0.05f), Is.EqualTo(0f)); // past window
+            Assert.That(BJJPose.AnticipationOffset(60f, 120f, 0.05f), Is.EqualTo(-0.05f).Within(1e-5f));
+            Assert.That(BJJPose.AnticipationOffset(30f, 120f, 0.05f), Is.LessThan(0f));
+        }
+
+        [Test]
+        public void RippleFired_CrossesEachSegmentOnce()
+        {
+            // step 50 ms: segment 2 fires at 100 ms. Crossing 90→110 fires it…
+            Assert.IsTrue(BJJPose.RippleFired(90f, 110f, 2, 50f));
+            // …but a frame fully before or after does not.
+            Assert.IsFalse(BJJPose.RippleFired(110f, 130f, 2, 50f));
+            Assert.IsFalse(BJJPose.RippleFired(40f, 60f, 2, 50f));
+            // Segment 0 (trigger 0) fires on the impact frame: elapsed crosses
+            // 0 from a negative "pre-impact" reading.
+            Assert.IsTrue(BJJPose.RippleFired(-2f, 0f, 0, 50f));
+            // Inactive ripple keeps elapsed negative → no segment ever fires.
+            Assert.IsFalse(BJJPose.RippleFired(-2f, -1f, 0, 50f));
+            Assert.IsFalse(BJJPose.RippleFired(-2f, -1f, 1, 50f));
+        }
     }
 }

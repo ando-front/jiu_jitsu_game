@@ -50,6 +50,27 @@ namespace BJJSimulator.Platform
         private Skeleton _top;
         private readonly SpringSet _bottomSprings = new SpringSet();
         private readonly SpringSet _topSprings    = new SpringSet();
+        // Tier-8 secondary-motion (inertia lag / follow-through) layer.
+        private readonly SecondaryLayer _bottomSecondary = new SecondaryLayer();
+        private readonly SecondaryLayer _topSecondary    = new SecondaryLayer();
+
+        // Tier-8 anticipation + impact ripple bookkeeping, per body.
+        private readonly Anim _bottomAnim = new Anim();
+        private readonly Anim _topAnim    = new Anim();
+
+        // Per-body transient animation state (anticipation windup + body wave).
+        private sealed class Anim
+        {
+            public int   ActionSig = int.MinValue;  // changes when a big move is selected
+            public float AnticipStartMs = -1f;       // when the current windup began
+            public float RipplePrevMs = -1f;         // last frame's elapsed-since-impact
+            public float RippleStartMs = -1f;        // when the body wave was kicked (-1 = none)
+            public bool  Initialised;
+        }
+
+        // Body-wave timing: pelvis → torso → shoulders → hands, 50 ms apart.
+        private const float RippleStepMs = 50f;
+        private const float AnticipWindowMs = 130f; // 0.13 s reverse load
 
         void Awake()
         {
@@ -75,7 +96,17 @@ namespace BJJSimulator.Platform
             if (_bottom == null) BuildRig();
             _bottomSprings.Reset();
             _topSprings.Reset();
+            _bottomSecondary.Reset();
+            _topSecondary.Reset();
+            ResetAnim(_bottomAnim);
+            ResetAnim(_topAnim);
             RenderFrame(g, intent, defense, nowMs, 0f);
+        }
+
+        private static void ResetAnim(Anim a)
+        {
+            a.ActionSig = int.MinValue; a.AnticipStartMs = -1f;
+            a.RipplePrevMs = -1f; a.RippleStartMs = -1f; a.Initialised = false;
         }
 
         private void RenderFrame(GameState g, Intent? intent, DefenseIntent? defense, float nowMs, float dt)
@@ -87,8 +118,23 @@ namespace BJJSimulator.Platform
             float fatigueB = Mathf.Clamp01(1f - g.Bottom.Stamina);
             float fatigueT = Mathf.Clamp01(1f - g.Top.Stamina);
 
-            RenderPose bp = ComputeRender(_bottomSprings, scene.Bottom, BJJPose.BottomPlacement, nowMs, dt, fatigueB);
-            RenderPose tp = ComputeRender(_topSprings,    scene.Top,    BJJPose.TopPlacement,    nowMs, dt, fatigueT);
+            // --- Anticipation: a big-move selection loads weight back briefly ---
+            UpdateAnticipation(_bottomAnim, BottomActionSig(g), nowMs);
+            UpdateAnticipation(_topAnim,    TopActionSig(g),    nowMs);
+
+            // --- Impact ripple: poll the sim's events for big state changes ----
+            PollRippleEvents(nowMs);
+
+            // Spine roundedness: the guard-bottom turtles its back (rounds
+            // forward); the passer-top stacks tall and extends, rounding only
+            // as its posture is broken down.
+            float roundB = 0.55f;
+            float roundT = -0.45f + Mathf.Clamp01(g.Top.PostureBreak.Y) * 1.1f;
+
+            RenderPose bp = ComputeRender(_bottomSprings, _bottomSecondary, _bottomAnim,
+                scene.Bottom, BJJPose.BottomPlacement, nowMs, dt, fatigueB, roundB);
+            RenderPose tp = ComputeRender(_topSprings, _topSecondary, _topAnim,
+                scene.Top, BJJPose.TopPlacement, nowMs, dt, fatigueT, roundT);
 
             // Ground contact + balance recovery — stance (top) body only; the
             // supine bottom player rests on its back, not its feet.
@@ -101,6 +147,67 @@ namespace BJJSimulator.Platform
 
             Place(_bottom, bp);
             Place(_top, tp);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Anticipation + impact-ripple drivers (Tier 8)
+        // ─────────────────────────────────────────────────────────────────────
+
+        // A coarse hash of "what big thing is this body doing right now". When
+        // it changes, a new move has been committed → fire the windup.
+        private static int BottomActionSig(GameState g)
+        {
+            int sig = (int)g.Guard * 31;
+            var jw = g.JudgmentWindow;
+            bool open = jw.State == JudgmentWindowState.Open || jw.State == JudgmentWindowState.Opening;
+            if (open && jw.Candidates != null && jw.Candidates.Length > 0)
+                sig = sig * 131 + ((int)jw.Candidates[0] + 1);
+            return sig;
+        }
+
+        private static int TopActionSig(GameState g)
+        {
+            int sig = g.PassAttempt.Kind == PassAttemptKind.InProgress ? 7 : 0;
+            if (g.CutAttempts.Left.Kind  == CutSlotKind.InProgress) sig += 17;
+            if (g.CutAttempts.Right.Kind == CutSlotKind.InProgress) sig += 53;
+            return sig;
+        }
+
+        private static void UpdateAnticipation(Anim a, int sig, float nowMs)
+        {
+            if (!a.Initialised) { a.ActionSig = sig; a.Initialised = true; return; }
+            if (sig != a.ActionSig)
+            {
+                a.ActionSig = sig;
+                a.AnticipStartMs = nowMs; // begin a fresh reverse-load windup
+            }
+        }
+
+        // Walk the sim's last-step events; a big momentum swing kicks a body
+        // wave that travels pelvis → torso → shoulders → hands.
+        private void PollRippleEvents(float nowMs)
+        {
+            if (_manager == null) return;
+            var events = _manager.LastStepEvents;
+            if (events == null) return;
+            for (int i = 0; i < events.Length; i++)
+            {
+                switch (events[i].Kind)
+                {
+                    // The bottom lands a sweep/submission → both bodies lurch.
+                    case SimEventKind.TechniqueConfirmed:
+                    case SimEventKind.CounterConfirmed:
+                        _bottomAnim.RippleStartMs = nowMs; _bottomAnim.RipplePrevMs = -1f;
+                        _topAnim.RippleStartMs    = nowMs; _topAnim.RipplePrevMs    = -1f;
+                        break;
+                    // The pass / leg lock resolves → the swept/passed body lurches.
+                    case SimEventKind.PassSucceeded:
+                    case SimEventKind.PassFailed:
+                    case SimEventKind.FootLockSucceeded:
+                        _bottomAnim.RippleStartMs = nowMs; _bottomAnim.RipplePrevMs = -1f;
+                        break;
+                }
+            }
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -177,10 +284,23 @@ namespace BJJSimulator.Platform
         // Compute one body's world-space render pose (springs → FK)
         // ─────────────────────────────────────────────────────────────────────
 
-        private RenderPose ComputeRender(SpringSet sp, BodyPose target, RigPlacement place,
-                                         float nowMs, float dt, float fatigue)
+        private RenderPose ComputeRender(SpringSet sp, SecondaryLayer sec, Anim anim,
+                                         BodyPose target, RigPlacement place,
+                                         float nowMs, float dt, float fatigue, float spineRound)
         {
+            // A freshly committed move briefly underdamps the limbs so the reach
+            // whips out and overshoots before settling.
+            if (anim.AnticipStartMs >= 0f && nowMs - anim.AnticipStartMs < AnticipWindowMs)
+                sp.ExciteLimbs();
+
             BodyPose p = sp.Step(target, dt);
+
+            // Secondary motion: a lighter, underdamped (8 Hz / ζ0.4) oscillator
+            // chases the primary smoother. Heavy parts (pelvis, torso) blend in
+            // more of it, so they lag and follow through; light limbs barely do.
+            // Body-wave impulses are kicked into this layer (see PollRippleEvents).
+            FireRipple(sec, anim, nowMs);
+            p = sec.Step(p, dt);
 
             // Tremor / strain jitter, added *after* smoothing. Fatigue raises the
             // frequency (faster shudder) and lowers the amplitude (finer shake).
@@ -194,11 +314,31 @@ namespace BJJSimulator.Platform
             p.TorsoPitch += strain;
             p.TorsoRoll  += strain * 0.7f;
 
+            // Anticipation: a brief reverse weight-load on the pelvis + a torso
+            // un-curl just before the move springs forward.
+            float antElapsed = anim.AnticipStartMs >= 0f ? nowMs - anim.AnticipStartMs : -1f;
+            float antic = BJJPose.AnticipationOffset(antElapsed, AnticipWindowMs, 1f);
+            p.PelvisZ    += antic * 0.04f;
+            p.TorsoPitch += antic * 0.18f;
+
             Matrix3 root = place.YawPi ? Matrix3.RotY(Mathf.PI) : Matrix3.Identity;
             Vector3 pelvisPos = place.Origin + new Vector3(p.PelvisX, p.PelvisY, p.PelvisZ);
             Matrix3 pelvisRot = Matrix3.Mul(root, Matrix3.EulerXYZ(p.PelvisPitch, p.PelvisYaw, p.PelvisRoll));
-            Vector3 torsoPos = pelvisPos + pelvisRot.MulV(new Vector3(0, BJJPose.PelvisToTorso, 0));
-            Matrix3 torsoRot = Matrix3.Mul(pelvisRot, Matrix3.EulerXYZ(p.TorsoPitch, p.TorsoYaw, p.TorsoRoll));
+
+            // Spine S-curve: split TorsoPitch across three segments (sum
+            // preserved → chest orientation unchanged) and walk the bent chain
+            // so the back visibly rounds (bottom) or extends (top).
+            BJJPose.SpineSCurve(p.TorsoPitch, spineRound, out float spLo, out float spMid, out float spUp);
+            float seg = BJJPose.PelvisToTorso / 3f;
+            Matrix3 rotLo  = Matrix3.Mul(pelvisRot, Matrix3.RotX(spLo));
+            Vector3 lowerSpine = pelvisPos + rotLo.MulV(new Vector3(0, seg, 0));
+            Matrix3 rotMid = Matrix3.Mul(rotLo, Matrix3.RotX(spMid));
+            Vector3 midSpine   = lowerSpine + rotMid.MulV(new Vector3(0, seg, 0));
+            Matrix3 rotUp  = Matrix3.Mul(rotMid, Matrix3.RotX(spUp));
+            Vector3 torsoPos   = midSpine + rotUp.MulV(new Vector3(0, seg, 0));
+            // Chest frame = the upper-spine tip + the torso yaw/roll (its pitch is
+            // already baked into rotUp). Identical to the old single-bone torso.
+            Matrix3 torsoRot = Matrix3.Mul(rotUp, Matrix3.Mul(Matrix3.RotY(p.TorsoYaw), Matrix3.RotZ(p.TorsoRoll)));
 
             // Breath: chest swells, shoulders rise and abduct (scapular spread).
             float breath01 = target.Breath * 0.5f + 0.5f;
@@ -211,16 +351,34 @@ namespace BJJSimulator.Platform
 
             var rp = new RenderPose
             {
-                Pelvis = pelvisPos, Chest = torsoPos, Head = headPos, NeckPivot = neckPos,
+                Pelvis = pelvisPos, LowerSpine = lowerSpine, MidSpine = midSpine,
+                Chest = torsoPos, Head = headPos, NeckPivot = neckPos,
                 TorsoRot = torsoRot, Breath01 = breath01,
                 GripL = p.ArmL.Grip, GripR = p.ArmR.Grip,
                 HeadPitch = p.HeadPitch, HeadYaw = p.HeadYaw,
             };
-            ArmFK(p.ArmL, -1f, torsoPos, torsoRot, shoulderY, shoulderXMul, out rp.ShoulderL, out rp.ElbowL, out rp.HandL);
-            ArmFK(p.ArmR,  1f, torsoPos, torsoRot, shoulderY, shoulderXMul, out rp.ShoulderR, out rp.ElbowR, out rp.HandR);
+            ArmFK(p.ArmL, -1f, torsoPos, torsoRot, shoulderY, shoulderXMul,
+                  out rp.ShoulderL, out rp.ElbowL, out rp.HandL, out rp.HandRotL);
+            ArmFK(p.ArmR,  1f, torsoPos, torsoRot, shoulderY, shoulderXMul,
+                  out rp.ShoulderR, out rp.ElbowR, out rp.HandR, out rp.HandRotR);
             LegFK(p.LegL, -1f, pelvisPos, pelvisRot, out rp.HipL, out rp.KneeL, out rp.AnkleL, out rp.ToeL);
             LegFK(p.LegR,  1f, pelvisPos, pelvisRot, out rp.HipR, out rp.KneeR, out rp.AnkleR, out rp.ToeR);
             return rp;
+        }
+
+        // Kick the body-wave impulses into the secondary layer as each 50 ms
+        // segment trigger is crossed (pelvis → torso → shoulders → hands).
+        private static void FireRipple(SecondaryLayer sec, Anim anim, float nowMs)
+        {
+            if (anim.RippleStartMs < 0f) return;
+            float elapsed = nowMs - anim.RippleStartMs;
+            float prev = anim.RipplePrevMs < 0f ? -2f : anim.RipplePrevMs;
+            if (BJJPose.RippleFired(prev, elapsed, 0, RippleStepMs)) sec.Kick(SecondaryLayer.Group.Pelvis,    6f);
+            if (BJJPose.RippleFired(prev, elapsed, 1, RippleStepMs)) sec.Kick(SecondaryLayer.Group.Torso,     5f);
+            if (BJJPose.RippleFired(prev, elapsed, 2, RippleStepMs)) sec.Kick(SecondaryLayer.Group.Shoulders, 7f);
+            if (BJJPose.RippleFired(prev, elapsed, 3, RippleStepMs)) sec.Kick(SecondaryLayer.Group.Hands,     9f);
+            anim.RipplePrevMs = elapsed;
+            if (elapsed > 4 * RippleStepMs + 200f) { anim.RippleStartMs = -1f; anim.RipplePrevMs = -1f; }
         }
 
         // Lift the body so its lowest foot/knee/hand rests on the mat, then nudge
@@ -270,7 +428,7 @@ namespace BJJSimulator.Platform
 
         private static void Shift(ref RenderPose rp, Vector3 d)
         {
-            rp.Pelvis += d; rp.Chest += d; rp.Head += d; rp.NeckPivot += d;
+            rp.Pelvis += d; rp.LowerSpine += d; rp.MidSpine += d; rp.Chest += d; rp.Head += d; rp.NeckPivot += d;
             rp.ShoulderL += d; rp.ShoulderR += d; rp.ElbowL += d; rp.ElbowR += d;
             rp.HandL += d; rp.HandR += d;
             rp.HipL += d; rp.HipR += d; rp.KneeL += d; rp.KneeR += d;
@@ -290,7 +448,8 @@ namespace BJJSimulator.Platform
 
         private static void ArmFK(ArmPose arm, float side, Vector3 torsoPos, Matrix3 torsoRot,
                                   float shoulderY, float shoulderXMul,
-                                  out Vector3 shoulder, out Vector3 elbow, out Vector3 hand)
+                                  out Vector3 shoulder, out Vector3 elbow, out Vector3 hand,
+                                  out Matrix3 handRot)
         {
             shoulder = torsoPos + torsoRot.MulV(new Vector3(BJJPose.ShoulderX * shoulderXMul * side, shoulderY, 0));
             Matrix3 armRot = Matrix3.Mul(torsoRot,
@@ -298,6 +457,7 @@ namespace BJJSimulator.Platform
             elbow = shoulder + armRot.MulV(new Vector3(0, -BJJPose.UpperArm, 0));
             Matrix3 foreRot = Matrix3.Mul(armRot, Matrix3.RotX(-arm.ElbowBend));
             hand = elbow + foreRot.MulV(new Vector3(0, -BJJPose.ForeArm, 0));
+            handRot = foreRot; // forearm frame: -y points down the hand, +z palm-forward
         }
 
         private static void LegFK(LegPose leg, float side, Vector3 pelvisPos, Matrix3 pelvisRot,
@@ -320,6 +480,8 @@ namespace BJJSimulator.Platform
         private void Place(Skeleton sk, RenderPose rp)
         {
             sk.Pelvis.position = rp.Pelvis;
+            sk.LowerSpine.position = rp.LowerSpine;
+            sk.MidSpine.position   = rp.MidSpine;
             sk.Chest.position  = rp.Chest;
             sk.Head.position   = rp.Head;
             sk.ShoulderL.position = rp.ShoulderL; sk.ShoulderR.position = rp.ShoulderR;
@@ -333,6 +495,9 @@ namespace BJJSimulator.Platform
             // Grip → hand swell (open palm splayed, fist compact). blockman.ts.
             sk.HandL.localScale = HandScale(rp.GripL);
             sk.HandR.localScale = HandScale(rp.GripR);
+            // Fingers curl shut with the grip channel (FingerCurl per knuckle).
+            PlaceFingers(sk.FingersL, rp.HandL, rp.HandRotL, -1f, rp.GripL);
+            PlaceFingers(sk.FingersR, rp.HandR, rp.HandRotR,  1f, rp.GripR);
             // Chest swells with the breath (x +4%, z +6% — matches blockman.ts).
             float d = jointRadius * 2f;
             sk.Chest.localScale = new Vector3(d * (1f + rp.Breath01 * 0.04f), d, d * (1f + rp.Breath01 * 0.06f));
@@ -340,7 +505,10 @@ namespace BJJSimulator.Platform
             // Bones. Arm bones thicken with grip (muscle tension).
             float gripMulL = 1f + Mathf.Clamp01(rp.GripL) * 0.5f;
             float gripMulR = 1f + Mathf.Clamp01(rp.GripR) * 0.5f;
-            Bone(sk.SpineBone, rp.Pelvis, rp.Chest);
+            // Three spine segments form the S-curve (lumbar → thoracic → chest).
+            Bone(sk.SpineLoBone,  rp.Pelvis,     rp.LowerSpine);
+            Bone(sk.SpineMidBone, rp.LowerSpine, rp.MidSpine);
+            Bone(sk.SpineUpBone,  rp.MidSpine,   rp.Chest);
             Bone(sk.NeckBone,  rp.Chest,  rp.Head); // full chest→head span
             Bone(sk.ClavLBone, rp.Chest,  rp.ShoulderL);  Bone(sk.ClavRBone, rp.Chest,  rp.ShoulderR);
             Bone(sk.UpArmLBone, rp.ShoulderL, rp.ElbowL, gripMulL); Bone(sk.UpArmRBone, rp.ShoulderR, rp.ElbowR, gripMulR);
@@ -356,6 +524,33 @@ namespace BJJSimulator.Platform
             float g = Mathf.Clamp01(grip);
             float d = jointRadius * 2f;
             return new Vector3(d * (1.55f - g * 0.75f), d * (0.62f + g * 0.33f), d * (1.42f - g * 0.62f));
+        }
+
+        // Curl four 3-knuckle fingers off the hand. Each knuckle folds by
+        // FingerCurl(grip, joint) about the hand's local x toward the palm, so
+        // grip 0 splays the hand open and grip 1 clenches a fist that "bites"
+        // into the gi. The hand frame is the forearm frame: -y runs down the
+        // hand, +z is palm-forward.
+        private void PlaceFingers(FingerRig fingers, Vector3 hand, Matrix3 handRot, float side, float grip)
+        {
+            const float segLen = 0.020f;
+            float[] spread = { -0.6f, -0.2f, 0.2f, 0.6f }; // fan across the palm
+            for (int f = 0; f < 4; f++)
+            {
+                // Mirror the fan for the left/right hand so both splay outward.
+                Vector3 knuckle = hand + handRot.MulV(new Vector3(spread[f] * 0.03f * side, -jointRadius * 0.9f, 0f));
+                Matrix3 rot = handRot;
+                Vector3 p = knuckle;
+                for (int j = 0; j < 3; j++)
+                {
+                    rot = Matrix3.Mul(rot, Matrix3.RotX(-BJJPose.FingerCurl(grip, j)));
+                    Vector3 next = p + rot.MulV(new Vector3(0, -segLen, 0));
+                    int idx = f * 3 + j;
+                    Bone(fingers.Bones[idx], p, next, 0.35f);
+                    fingers.Joints[idx].position = next;
+                    p = next;
+                }
+            }
         }
 
         // Fatigue raises the shudder frequency and trims its amplitude.
@@ -405,6 +600,8 @@ namespace BJJSimulator.Platform
             var sk = new Skeleton();
 
             sk.Pelvis    = Joint(root, "Pelvis", mat);
+            sk.LowerSpine = Joint(root, "LowerSpine", mat, 0.85f);
+            sk.MidSpine   = Joint(root, "MidSpine", mat, 0.9f);
             sk.Chest     = Joint(root, "Chest", mat);
             sk.Head      = Joint(root, "Head", mat, 1.4f);
             sk.Nose      = Joint(root, "Nose", noseMat, 0.5f); // gaze indicator
@@ -421,7 +618,9 @@ namespace BJJSimulator.Platform
             sk.AnkleL    = Joint(root, "AnkleL", mat);
             sk.AnkleR    = Joint(root, "AnkleR", mat);
 
-            sk.SpineBone  = Bone(root, "Spine", mat);
+            sk.SpineLoBone  = Bone(root, "SpineLo", mat);
+            sk.SpineMidBone = Bone(root, "SpineMid", mat);
+            sk.SpineUpBone  = Bone(root, "SpineUp", mat);
             sk.NeckBone   = Bone(root, "Neck", mat);
             sk.ClavLBone  = Bone(root, "ClavL", mat);
             sk.ClavRBone  = Bone(root, "ClavR", mat);
@@ -437,7 +636,21 @@ namespace BJJSimulator.Platform
             sk.ShinRBone  = Bone(root, "ShinR", mat);
             sk.FootLBone  = Bone(root, "FootL", mat);
             sk.FootRBone  = Bone(root, "FootR", mat);
+
+            sk.FingersL = BuildFingers(root, "FingerL", mat);
+            sk.FingersR = BuildFingers(root, "FingerR", mat);
             return sk;
+        }
+
+        private FingerRig BuildFingers(Transform root, string prefix, Material mat)
+        {
+            var fr = new FingerRig();
+            for (int i = 0; i < 12; i++)
+            {
+                fr.Joints[i] = Joint(root, $"{prefix}_J{i}", mat, 0.4f);
+                fr.Bones[i]  = Bone(root, $"{prefix}_B{i}", mat);
+            }
+            return fr;
         }
 
         private Transform Joint(Transform parent, string name, Material mat, float scaleMul = 1f)
@@ -490,23 +703,31 @@ namespace BJJSimulator.Platform
 
         private struct RenderPose
         {
-            public Vector3 Pelvis, Chest, Head, NeckPivot;
+            public Vector3 Pelvis, LowerSpine, MidSpine, Chest, Head, NeckPivot;
             public Vector3 ShoulderL, ShoulderR, ElbowL, ElbowR, HandL, HandR;
             public Vector3 HipL, HipR, KneeL, KneeR, AnkleL, AnkleR, ToeL, ToeR;
             public Vector3 GazeNose;
-            public Matrix3 TorsoRot;
+            public Matrix3 TorsoRot, HandRotL, HandRotR;
             public float Breath01, GripL, GripR, HeadPitch, HeadYaw;
         }
 
         private class Skeleton
         {
-            public Transform Pelvis, Chest, Head, Nose;
+            public Transform Pelvis, LowerSpine, MidSpine, Chest, Head, Nose;
             public Transform ShoulderL, ShoulderR, ElbowL, ElbowR, HandL, HandR;
             public Transform HipL, HipR, KneeL, KneeR, AnkleL, AnkleR;
-            public Transform SpineBone, NeckBone, ClavLBone, ClavRBone;
+            public Transform SpineLoBone, SpineMidBone, SpineUpBone, NeckBone, ClavLBone, ClavRBone;
             public Transform UpArmLBone, UpArmRBone, LoArmLBone, LoArmRBone;
             public Transform PelvLBone, PelvRBone, ThighLBone, ThighRBone;
             public Transform ShinLBone, ShinRBone, FootLBone, FootRBone;
+            public FingerRig FingersL, FingersR;
+        }
+
+        // 4 fingers × 3 knuckles = 12 joint spheres + 12 thin bones per hand.
+        private class FingerRig
+        {
+            public Transform[] Joints = new Transform[12];
+            public Transform[] Bones  = new Transform[12];
         }
     }
 
@@ -518,16 +739,15 @@ namespace BJJSimulator.Platform
 
     internal sealed class SpringSet
     {
-        // Channel layout (must match Step / Build below).
-        const int PvX=0, PvY=1, PvZ=2, PvP=3, PvYw=4, PvR=5;
-        const int ToP=6, ToY=7, ToR=8, HdP=9, HdY=10;
-        const int LSp=11, LSr=12, LSy=13, LEb=14, LGr=15;
-        const int RSp=16, RSr=17, RSy=18, REb=19, RGr=20;
-        const int LHp=21, LHy=22, LHr=23, LKb=24, LAk=25;
-        const int RHp=26, RHy=27, RHr=28, RKb=29, RAk=30;
-        const int N = 31;
-
-        const float SubstepS = 0.008f;
+        // Channel layout (must match Step / Build below). Shared with
+        // SecondaryLayer, so internal.
+        internal const int PvX=0, PvY=1, PvZ=2, PvP=3, PvYw=4, PvR=5;
+        internal const int ToP=6, ToY=7, ToR=8, HdP=9, HdY=10;
+        internal const int LSp=11, LSr=12, LSy=13, LEb=14, LGr=15;
+        internal const int RSp=16, RSr=17, RSy=18, REb=19, RGr=20;
+        internal const int LHp=21, LHy=22, LHr=23, LKb=24, LAk=25;
+        internal const int RHp=26, RHy=27, RHr=28, RKb=29, RAk=30;
+        internal const int N = 31;
 
         // Tuning groups: arm 5.5/0.65, leg 4.0/0.80, torso 3.0/0.90, pelvis 4.0/1.0.
         static readonly float[] Freq = BuildFreq();
@@ -536,8 +756,14 @@ namespace BJJSimulator.Platform
         readonly float[] _x = new float[N];
         readonly float[] _v = new float[N];
         bool _init;
+        bool _excite; // one-step flag: under-damp the limbs for a snappy reach
 
-        public void Reset() => _init = false;
+        public void Reset() { _init = false; _excite = false; }
+
+        // Temporarily loosen the arm/leg damping so a freshly committed move
+        // whips out and overshoots. Set per frame during the windup window;
+        // consumed (and cleared) by the next Step.
+        public void ExciteLimbs() => _excite = true;
 
         public BodyPose Step(BodyPose t, float dt)
         {
@@ -550,26 +776,24 @@ namespace BJJSimulator.Platform
             else
             {
                 for (int i = 0; i < N; i++)
-                    StepSpring(i, tgt[i], dt, Freq[i], Zeta[i]);
+                {
+                    // While excited, the limbs (arms LSp..RGr, legs LHp..RAk)
+                    // drop to 0.6× zeta for a visible overshoot; the spine and
+                    // pelvis keep their stable tuning.
+                    float zeta = (_excite && i >= LSp) ? Zeta[i] * 0.6f : Zeta[i];
+                    StepSpring(i, tgt[i], dt, Freq[i], zeta);
+                }
             }
+            _excite = false;
             return Rebuild(t);
         }
 
         void StepSpring(int i, float target, float dtS, float freqHz, float zeta)
         {
-            float w = 2f * Mathf.PI * freqHz;
-            float remaining = Mathf.Min(dtS, 0.1f);
-            while (remaining > 0f)
-            {
-                float h = Mathf.Min(SubstepS, remaining);
-                float a = -w * w * (_x[i] - target) - 2f * zeta * w * _v[i];
-                _v[i] += a * h;
-                _x[i] += _v[i] * h;
-                remaining -= h;
-            }
+            BJJPose.IntegrateSpring(ref _x[i], ref _v[i], target, freqHz, zeta, dtS);
         }
 
-        static float[] Flatten(BodyPose p)
+        internal static float[] Flatten(BodyPose p)
         {
             var a = new float[N];
             a[PvX]=p.PelvisX; a[PvY]=p.PelvisY; a[PvZ]=p.PelvisZ;
@@ -585,20 +809,22 @@ namespace BJJSimulator.Platform
 
         // Rebuild a BodyPose from the smoothed channels, carrying through the
         // un-sprung fields (Breath, Tremor) from the live target.
-        BodyPose Rebuild(BodyPose t)
+        BodyPose Rebuild(BodyPose t) => Rebuild(_x, t);
+
+        internal static BodyPose Rebuild(float[] x, BodyPose t)
         {
             return new BodyPose
             {
-                PelvisX=_x[PvX], PelvisY=_x[PvY], PelvisZ=_x[PvZ],
-                PelvisPitch=_x[PvP], PelvisYaw=_x[PvYw], PelvisRoll=_x[PvR],
-                TorsoPitch=_x[ToP], TorsoYaw=_x[ToY], TorsoRoll=_x[ToR],
+                PelvisX=x[PvX], PelvisY=x[PvY], PelvisZ=x[PvZ],
+                PelvisPitch=x[PvP], PelvisYaw=x[PvYw], PelvisRoll=x[PvR],
+                TorsoPitch=x[ToP], TorsoYaw=x[ToY], TorsoRoll=x[ToR],
                 TorsoTremor=t.TorsoTremor,
-                HeadPitch=_x[HdP], HeadYaw=_x[HdY],
+                HeadPitch=x[HdP], HeadYaw=x[HdY],
                 Breath=t.Breath,
-                ArmL = new ArmPose { ShoulderPitch=_x[LSp], ShoulderRoll=_x[LSr], ShoulderYaw=_x[LSy], ElbowBend=_x[LEb], Tremor=t.ArmL.Tremor, Grip=_x[LGr] },
-                ArmR = new ArmPose { ShoulderPitch=_x[RSp], ShoulderRoll=_x[RSr], ShoulderYaw=_x[RSy], ElbowBend=_x[REb], Tremor=t.ArmR.Tremor, Grip=_x[RGr] },
-                LegL = new LegPose { HipPitch=_x[LHp], HipYaw=_x[LHy], HipRoll=_x[LHr], KneeBend=_x[LKb], Ankle=_x[LAk] },
-                LegR = new LegPose { HipPitch=_x[RHp], HipYaw=_x[RHy], HipRoll=_x[RHr], KneeBend=_x[RKb], Ankle=_x[RAk] },
+                ArmL = new ArmPose { ShoulderPitch=x[LSp], ShoulderRoll=x[LSr], ShoulderYaw=x[LSy], ElbowBend=x[LEb], Tremor=t.ArmL.Tremor, Grip=x[LGr] },
+                ArmR = new ArmPose { ShoulderPitch=x[RSp], ShoulderRoll=x[RSr], ShoulderYaw=x[RSy], ElbowBend=x[REb], Tremor=t.ArmR.Tremor, Grip=x[RGr] },
+                LegL = new LegPose { HipPitch=x[LHp], HipYaw=x[LHy], HipRoll=x[LHr], KneeBend=x[LKb], Ankle=x[LAk] },
+                LegR = new LegPose { HipPitch=x[RHp], HipYaw=x[RHy], HipRoll=x[RHr], KneeBend=x[RKb], Ankle=x[RAk] },
             };
         }
 
@@ -620,6 +846,77 @@ namespace BJJSimulator.Platform
             for (int i = LSp; i <= RGr; i++) z[i] = 0.65f;  // arms
             for (int i = LHp; i <= RAk; i++) z[i] = 0.80f;  // legs
             return z;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Secondary motion (Tier 8): a lighter, under-damped (8 Hz / ζ0.4) oscillator
+    // that chases the already-smoothed primary pose. The render value is a blend
+    // primary + (secondary − primary)·lag, so heavy parts (pelvis / torso) trail
+    // and follow through while light limbs barely lag. Body-wave impulses
+    // (Kick) inject velocity here so an impact ripples out and decays naturally.
+    // Reuses SpringSet's channel layout / Flatten / Rebuild.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    internal sealed class SecondaryLayer
+    {
+        public enum Group { Pelvis, Torso, Shoulders, Hands }
+
+        const float Freq = 8f;
+        const float Zeta = 0.4f;
+
+        static readonly float[] Lag = BuildLag();
+
+        readonly float[] _x = new float[SpringSet.N];
+        readonly float[] _v = new float[SpringSet.N];
+        bool _init;
+
+        public void Reset()
+        {
+            _init = false;
+            for (int i = 0; i < _v.Length; i++) _v[i] = 0f;
+        }
+
+        // Kick velocity into a body region — the impact ripple's per-segment
+        // impulse. No-op before the first Step (the channel has no state yet).
+        public void Kick(Group g, float dv)
+        {
+            if (!_init) return;
+            switch (g)
+            {
+                case Group.Pelvis:    _v[SpringSet.PvP] += dv; _v[SpringSet.PvZ] += dv * 0.4f; break;
+                case Group.Torso:     _v[SpringSet.ToP] += dv; break;
+                case Group.Shoulders: _v[SpringSet.LSp] += dv; _v[SpringSet.RSp] += dv; break;
+                case Group.Hands:     _v[SpringSet.LEb] += dv; _v[SpringSet.REb] += dv; break;
+            }
+        }
+
+        public BodyPose Step(BodyPose primary, float dt)
+        {
+            float[] tgt = SpringSet.Flatten(primary);
+            if (!_init)
+            {
+                for (int i = 0; i < tgt.Length; i++) { _x[i] = tgt[i]; _v[i] = 0f; }
+                _init = true;
+                return primary; // no lag on the first settled frame
+            }
+            var blended = new float[tgt.Length];
+            for (int i = 0; i < tgt.Length; i++)
+            {
+                BJJPose.IntegrateSpring(ref _x[i], ref _v[i], tgt[i], Freq, Zeta, dt);
+                blended[i] = tgt[i] + (_x[i] - tgt[i]) * Lag[i];
+            }
+            return SpringSet.Rebuild(blended, primary);
+        }
+
+        static float[] BuildLag()
+        {
+            var l = new float[SpringSet.N];
+            for (int i = SpringSet.PvX; i <= SpringSet.PvR; i++) l[i] = 0.45f; // pelvis — heavy, trails
+            for (int i = SpringSet.ToP; i <= SpringSet.HdY; i++) l[i] = 0.50f; // torso/head — heaviest
+            for (int i = SpringSet.LSp; i <= SpringSet.RGr; i++) l[i] = 0.28f; // arms — light, snappy
+            for (int i = SpringSet.LHp; i <= SpringSet.RAk; i++) l[i] = 0.32f; // legs
+            return l;
         }
     }
 }
