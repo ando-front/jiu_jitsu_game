@@ -194,6 +194,19 @@
 Pure / テスト / Platform / Editor 自動化 / MCP / Mixamo Humanoid 経路まで完了。
 残るのは Visual Pillar の上位仕上げと既知 fail の解消。
 
+0. **プロシージャル pose 合成の C# 移植** 🟡 **コード移植済 / Editor 検証待ち (2026-06-16)** —
+   `Runtime/Platform/BJJPose.cs` を追加。Stage 1 の `src/prototype/web/src/scene/pose.ts`
+   (Tier 1〜6: 関節ターゲット・解析的レッグソルバー・接触IK・視線・予備動作・作用反作用・
+   グリップ相互拘束・手の開閉・足首・技別ウィンドウエントリー・マットポスト/バランス回復・
+   生きているアイドル変動・1回ごとの実行スタイル差) を 1:1 で写経した純粋ロジック。
+   `BJJPose.ComputeScenePoses(bottomIn, topIn)` が両者の `BodyPose`(全関節角 + grip/ankle)
+   を返す。EditMode テスト `Tests/EditMode/BJJPoseTest.cs`(15 ケース、TS 不変条件のミラー)を
+   同梱。**このクラウド環境には C#/Unity が無くコンパイル/Test Runner 実行ができないため、
+   Mac の Unity Editor での検証(EditMode テスト緑化)が前提。** 未移植: フィニッシュ・
+   タブロー(`computeFinishPoses`)と、ディフェンダー base ゾーンの接触アンカー
+   (C# state は GripZone のみ保持のため現状 rest 姿勢)。次段で `BJJAvatarBinder` を
+   `BodyPose` 駆動の関節リグ + 減衰ばねに置き換える(現行 binder は手足オフセットのみ)。
+
 1. ~~**Skinned mesh + Animator**~~ 🟢 **完了 (2026-04-26)** — `Runtime/Platform/BJJAvatarBinder.cs`
    + `Assets/BJJSimulator/Art/` ディレクトリを追加。`BJJGameManager.CurrentGameState` を
    LateUpdate で読み BlockMan 関節 Transform へ流す。Inspector rig 配線 (Prefab 組み立て)
