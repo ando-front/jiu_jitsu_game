@@ -21,6 +21,7 @@
 //   - pelvis offsets are world-axis metres from the rig's base spot.
 
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace BJJSimulator.Platform
@@ -767,6 +768,87 @@ namespace BJJSimulator.Platform
                 case BaseZone.BicepR: anchor = opp.BicepR; return true;
                 default: anchor = Vector3.zero; return false;
             }
+        }
+
+        // ---- Realism helpers (Tier 7) ----------------------------------------
+        // New pure utilities for ground contact, balance and parametric gaze.
+        // No Stage-1 pose.ts counterpart yet; kept pure + EditMode-tested and
+        // consumed by BJJPoseRig for the visual layer.
+
+        // How far to lift a body so its lowest contact point rests on groundY.
+        // Returns 0 when nothing penetrates the mat.
+        public static float GroundRestOffsetY(float groundY, params float[] contactY)
+        {
+            float min = float.PositiveInfinity;
+            for (int i = 0; i < contactY.Length; i++)
+                if (contactY[i] < min) min = contactY[i];
+            return (min < groundY) ? (groundY - min) : 0f;
+        }
+
+        // Is the centre-of-mass XZ projection inside the support polygon (the
+        // convex hull of the ground-contact points)? Fewer than 3 contacts is
+        // treated as an unstable (line/point) base → false.
+        public static bool ComInsideSupport(Vector2 com, Vector2[] contactsXZ)
+        {
+            if (contactsXZ == null || contactsXZ.Length < 3) return false;
+            List<Vector2> hull = ConvexHull(contactsXZ);
+            if (hull.Count < 3) return false;
+            bool pos = false, neg = false;
+            int n = hull.Count;
+            for (int i = 0; i < n; i++)
+            {
+                Vector2 a = hull[i], b = hull[(i + 1) % n];
+                float cross = (b.x - a.x) * (com.y - a.y) - (b.y - a.y) * (com.x - a.x);
+                if (cross > 1e-6f) pos = true;
+                else if (cross < -1e-6f) neg = true;
+                if (pos && neg) return false;
+            }
+            return true;
+        }
+
+        // Andrew's monotone chain convex hull (CCW), for ComInsideSupport.
+        static List<Vector2> ConvexHull(Vector2[] ptsIn)
+        {
+            var pts = new List<Vector2>(ptsIn);
+            pts.Sort((p, q) => p.x != q.x ? p.x.CompareTo(q.x) : p.y.CompareTo(q.y));
+            int n = pts.Count;
+            var hull = new List<Vector2>(2 * n);
+            // lower
+            for (int i = 0; i < n; i++)
+            {
+                while (hull.Count >= 2 && Cross(hull[hull.Count - 2], hull[hull.Count - 1], pts[i]) <= 0)
+                    hull.RemoveAt(hull.Count - 1);
+                hull.Add(pts[i]);
+            }
+            // upper
+            int lower = hull.Count + 1;
+            for (int i = n - 2; i >= 0; i--)
+            {
+                while (hull.Count >= lower && Cross(hull[hull.Count - 2], hull[hull.Count - 1], pts[i]) <= 0)
+                    hull.RemoveAt(hull.Count - 1);
+                hull.Add(pts[i]);
+            }
+            hull.RemoveAt(hull.Count - 1); // last == first
+            return hull;
+        }
+
+        static float Cross(Vector2 o, Vector2 a, Vector2 b) =>
+            (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+
+        // Parametric gaze: aim the face (+z) at a world target, expressed in the
+        // torso frame. Generalises LookAt — `blend` weights the look-at vs the
+        // pose's base angle, with separate yaw clamp / pitch limits. Used for
+        // mutual head look-at (top → opponent head, bottom → opponent hip).
+        public static void GazeTo(Vector3 headOrigin, Matrix3 torsoRot, Vector3 targetWorld,
+                                  float basePitch, float baseYaw, float blend,
+                                  float yawClampRad, float pitchLo, float pitchHi,
+                                  out float pitch, out float yaw)
+        {
+            Vector3 tLocal = V3Norm(torsoRot.Transpose().MulV(targetWorld - headOrigin));
+            float y = Mathf.Atan2(tLocal.x, Mathf.Max(0.15f, tLocal.z));
+            float p = -Mathf.Atan2(tLocal.y, Mathf.Sqrt(tLocal.x * tLocal.x + tLocal.z * tLocal.z));
+            pitch = Mathf.Clamp(basePitch * (1f - blend) + p * blend, pitchLo, pitchHi);
+            yaw = Mathf.Clamp(baseYaw * (1f - blend) + y * blend, -yawClampRad, yawClampRad);
         }
 
         // ---- Two-bone arm IK --------------------------------------------------
