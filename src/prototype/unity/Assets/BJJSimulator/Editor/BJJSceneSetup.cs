@@ -90,7 +90,9 @@ namespace BJJSimulator.EditorTools
             var hud      = go.AddComponent<BJJDebugHud>();
             var volCtrl  = go.AddComponent<BJJVolumeController>();
             var impact   = go.AddComponent<BJJImpactFeedback>();
-            var binder   = go.AddComponent<BJJAvatarBinder>();
+            // BJJPoseRig builds its own full BlockMan skeleton procedurally and
+            // drives it from BJJPose.ComputeScenePoses — no Inspector wiring.
+            go.AddComponent<BJJPoseRig>();
 
             // NOTE: actionsAsset assignment is deferred to after all AssetDatabase
             // operations to avoid the reference being invalidated by SaveAssets().
@@ -132,8 +134,10 @@ namespace BJJSimulator.EditorTools
             var camGo = new GameObject("Main Camera");
             SceneManager.MoveGameObjectToScene(camGo, scene);
             camGo.tag = "MainCamera";
-            camGo.transform.position = new Vector3(0f, 2f, -3f);
-            camGo.transform.rotation = Quaternion.Euler(15f, 0f, 0f);
+            // Guard-side framing (mirrors blockman.ts): supine player in the
+            // foreground at the origin, kneeling opponent behind at z ≈ −0.5.
+            camGo.transform.position = new Vector3(0f, 1.25f, 1.9f);
+            camGo.transform.LookAt(new Vector3(0f, 0.5f, -0.5f));
             var cam = camGo.AddComponent<Camera>();
             camGo.AddComponent<AudioListener>();
 
@@ -170,41 +174,10 @@ namespace BJJSimulator.EditorTools
             AssignSerialized(impact,  "globalVolume", vol);
             AssignSerialized(impact,  "mainCamera",   cam);
 
-            // ── 5. Blockman rig ─────────────────────────────────────────────────
-            var chars = new GameObject("Characters");
-            SceneManager.MoveGameObjectToScene(chars, scene);
-
-            // Bottom (Guard) — starts at x = −0.4
-            var bottomRoot  = CreateBody(scene, chars.transform, "Bottom",
-                                         new Vector3(-0.4f, 0f, 0f));
-            var bLeftHand   = CreateJoint(scene, bottomRoot, "LeftHand",
-                                          new Vector3(-0.25f, 0.5f, 0f));
-            var bRightHand  = CreateJoint(scene, bottomRoot, "RightHand",
-                                          new Vector3( 0.25f, 0.5f, 0f));
-            var bLeftFoot   = CreateJoint(scene, bottomRoot, "LeftFoot",
-                                          new Vector3(-0.15f, 0f,   0f));
-            var bRightFoot  = CreateJoint(scene, bottomRoot, "RightFoot",
-                                          new Vector3( 0.15f, 0f,   0f));
-
-            var bLeftFootRend  = bLeftFoot.GetComponent<Renderer>();
-            var bRightFootRend = bRightFoot.GetComponent<Renderer>();
-
-            // Top (Passer) — starts at x = +0.4
-            var topRoot  = CreateBody(scene, chars.transform, "Top",
-                                      new Vector3(0.4f, 0f, 0f));
-            var topSpine = CreateJoint(scene, topRoot, "Spine",
-                                       new Vector3(0f, 0.7f, 0f));
-
-            // Wire binder
-            AssignSerialized(binder, "bottomRoot",              bottomRoot);
-            AssignSerialized(binder, "bottomLeftHand",          bLeftHand);
-            AssignSerialized(binder, "bottomRightHand",         bRightHand);
-            AssignSerialized(binder, "bottomLeftFoot",          bLeftFoot);
-            AssignSerialized(binder, "bottomRightFoot",         bRightFoot);
-            AssignSerialized(binder, "bottomLeftFootRenderer",  bLeftFootRend);
-            AssignSerialized(binder, "bottomRightFootRenderer", bRightFootRend);
-            AssignSerialized(binder, "topRoot",                 topRoot);
-            AssignSerialized(binder, "topSpine",                topSpine);
+            // ── 5. Rig ───────────────────────────────────────────────────────────
+            // The full BlockMan skeleton is built procedurally at runtime by
+            // BJJPoseRig (added to the GameManager GameObject above); nothing to
+            // wire here.
 
             // ── 6. Save & build settings ─────────────────────────────────────────
             // Deferred assignment: reload inputActions from AssetDatabase now that all
