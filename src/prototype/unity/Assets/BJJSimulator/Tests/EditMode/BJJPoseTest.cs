@@ -171,5 +171,104 @@ namespace BJJSimulator.Tests
             Assert.That(a.PelvisYaw, Is.EqualTo(b.PelvisYaw));
             Assert.That(a.LegL.KneeBend, Is.EqualTo(b.LegL.KneeBend));
         }
+
+        // --- Grip coupling (computeScenePoses step 3) -------------------------
+
+        [Test]
+        public void HeldSleeve_DragsDefenderArm()
+        {
+            var poses = BJJPose.ComputeScenePoses(
+                Bottom(r: Hand(HandState.Gripped, GripZone.SleeveL)), Top());
+            var bf = BJJPose.ComputeBodyFrames(poses.Bottom, BJJPose.BottomPlacement);
+            var tf = BJJPose.ComputeBodyFrames(poses.Top, BJJPose.TopPlacement);
+            Assert.That(Vector3.Distance(tf.HandL, bf.HandR), Is.LessThan(0.06f)); // hands overlap
+            Assert.That(poses.Top.ArmL.Tremor, Is.GreaterThanOrEqualTo(0.3f));     // fights the grip
+        }
+
+        // --- Base zone anchors -------------------------------------------------
+
+        [Test]
+        public void BaseZoneAnchor_MapsKneeAndChest()
+        {
+            var frames = BJJPose.ComputeBodyFrames(BJJPose.ComputeTopPose(Top()), BJJPose.TopPlacement);
+            Assert.IsTrue(BJJPose.BaseZoneAnchor(BaseZone.KneeL, frames, out Vector3 knee));
+            Assert.That(Vector3.Distance(knee, frames.KneeL), Is.LessThan(1e-5f));
+            Assert.IsTrue(BJJPose.BaseZoneAnchor(BaseZone.Chest, frames, out Vector3 chest));
+            Assert.That(chest.y, Is.GreaterThan(frames.PelvisPos.y)); // chest sits above hips
+            Assert.IsFalse(BJJPose.BaseZoneAnchor(BaseZone.None, frames, out _));
+        }
+
+        // --- Finish tableaux (computeFinishPoses) ------------------------------
+
+        [Test]
+        public void TriangleFinish_LocksLegsHighAcrossNeck()
+        {
+            var f = BJJPose.ComputeFinishPoses(FinishKind.Triangle, 0f);
+            BJJPose.LegDirections(f.Bottom.LegR, out Vector3 thigh, out Vector3 shin);
+            Assert.That(thigh.z, Is.GreaterThan(0.6f));   // thigh steeply up
+            Assert.That(shin.x, Is.LessThan(-0.5f));      // shin hard across
+            Assert.That(f.Top.TorsoPitch, Is.GreaterThan(0.6f)); // defender folded
+        }
+
+        [Test]
+        public void ScissorFinish_TopplesDefender()
+        {
+            var f = BJJPose.ComputeFinishPoses(FinishKind.ScissorSweep, 600f);
+            Assert.That(Mathf.Abs(f.Top.PelvisRoll), Is.GreaterThan(1f));
+            Assert.That(f.Top.PelvisY, Is.LessThan(0.35f));
+        }
+
+        [Test]
+        public void FlowerFinish_MirrorsScissor()
+        {
+            var scissor = BJJPose.ComputeFinishPoses(FinishKind.ScissorSweep, 0f).Top;
+            var flower  = BJJPose.ComputeFinishPoses(FinishKind.FlowerSweep, 0f).Top;
+            Assert.That(Mathf.Sign(flower.PelvisRoll), Is.EqualTo(-Mathf.Sign(scissor.PelvisRoll)));
+            Assert.That(Mathf.Sign(flower.PelvisX), Is.EqualTo(-Mathf.Sign(scissor.PelvisX)));
+        }
+
+        [Test]
+        public void HipBumpFinish_SitsAttackerUp_TipsDefenderBack()
+        {
+            var f = BJJPose.ComputeFinishPoses(FinishKind.HipBump, 600f);
+            Assert.That(f.Bottom.TorsoPitch, Is.GreaterThan(0.9f));
+            Assert.That(f.Top.TorsoPitch, Is.LessThan(-0.3f));
+        }
+
+        [Test]
+        public void PassFinish_SettlesDefenderToSide()
+        {
+            var f = BJJPose.ComputeFinishPoses(FinishKind.Pass, 600f);
+            Assert.That(Mathf.Abs(f.Top.PelvisX), Is.GreaterThan(0.3f));
+            BJJPose.LegDirections(f.Bottom.LegR, out Vector3 rThigh, out _);
+            BJJPose.LegDirections(f.Bottom.LegL, out Vector3 lThigh, out _);
+            Assert.That(Mathf.Sign(lThigh.x), Is.EqualTo(-Mathf.Sign(rThigh.x)));
+        }
+
+        [Test]
+        public void Finish_RampsThroughExecutionPhase()
+        {
+            var mid     = BJJPose.ComputeFinishPoses(FinishKind.ScissorSweep, 60f).Top;
+            var settled = BJJPose.ComputeFinishPoses(FinishKind.ScissorSweep, 1200f).Top;
+            Assert.That(mid.PelvisRoll, Is.LessThan(settled.PelvisRoll));
+            Assert.That(mid.PelvisY, Is.GreaterThan(settled.PelvisY)); // still falling
+        }
+
+        [Test]
+        public void ScrambleFinish_ResetsBothPlayers()
+        {
+            var f = BJJPose.ComputeFinishPoses(FinishKind.Scramble, 600f);
+            Assert.That(f.Bottom.TorsoPitch, Is.GreaterThan(0.5f)); // sat up
+            Assert.That(f.Top.PelvisZ, Is.LessThan(-0.1f));         // backing off
+        }
+
+        [Test]
+        public void SubmissionTableaux_KeepBreathing()
+        {
+            var a = BJJPose.ComputeFinishPoses(FinishKind.CrossCollar, 0f);
+            var b = BJJPose.ComputeFinishPoses(FinishKind.CrossCollar, 700f);
+            Assert.That(Mathf.Abs(a.Bottom.Breath - b.Bottom.Breath), Is.GreaterThan(1e-4f));
+            Assert.That(Mathf.Abs(a.Bottom.ArmL.ElbowBend - b.Bottom.ArmL.ElbowBend), Is.GreaterThan(1e-4f));
+        }
     }
 }

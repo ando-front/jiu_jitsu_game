@@ -133,6 +133,20 @@ namespace BJJSimulator.Platform
         public BodyPose Top;
     }
 
+    // Finish-tableau selector — Technique | CounterTechnique | PASS | SCRAMBLE,
+    // mirroring the TS `FinishKind` union (pose.ts).
+    public enum FinishKind
+    {
+        Triangle, Omoplata, ScissorSweep, FlowerSweep, HipBump, CrossCollar,
+        ScissorCounter, TriangleEarlyStack, Pass, Scramble,
+    }
+
+    public struct FinishPoses
+    {
+        public BodyPose Bottom;
+        public BodyPose Top;
+    }
+
     // 3x3 row-major rotation matrix (transpose == inverse for pure rotations).
     public struct Matrix3
     {
@@ -739,6 +753,22 @@ namespace BJJSimulator.Platform
             }
         }
 
+        // World-space anchor for a defender base zone on the attacker's body.
+        // Ported 1:1 from pose.ts baseZoneAnchor.
+        public static bool BaseZoneAnchor(BaseZone zone, BodyFrames opp, out Vector3 anchor)
+        {
+            switch (zone)
+            {
+                case BaseZone.Chest: anchor = opp.TorsoPos + opp.TorsoRot.MulV(new Vector3(0, 0.30f, 0.14f)); return true;
+                case BaseZone.Hip: anchor = opp.PelvisPos + opp.PelvisRot.MulV(new Vector3(0, 0, 0.12f)); return true;
+                case BaseZone.KneeL: anchor = opp.KneeL; return true;
+                case BaseZone.KneeR: anchor = opp.KneeR; return true;
+                case BaseZone.BicepL: anchor = opp.BicepL; return true;
+                case BaseZone.BicepR: anchor = opp.BicepR; return true;
+                default: anchor = Vector3.zero; return false;
+            }
+        }
+
         // ---- Two-bone arm IK --------------------------------------------------
 
         public static ArmPose SolveArmIK(Vector3 targetWorld, Vector3 shoulderWorld, Matrix3 torsoRot,
@@ -859,13 +889,243 @@ namespace BJJSimulator.Platform
             bottomMid.ArmR = IkAttackerArm(bottomIn.RightHand, b0.ArmR, tF, bF0, 'R');
             BodyFrames bF = ComputeBodyFrames(bottomMid, BottomPlacement);
 
-            // 3. Gaze.
-            LookAt(bottomMid, bF, tF.HeadPos, out float bp, out float by);
-            LookAt(topMid, tF, bF.HeadPos, out float tp, out float ty);
-            bottomMid.HeadPitch = bp; bottomMid.HeadYaw = by;
-            topMid.HeadPitch = tp; topMid.HeadYaw = ty;
+            // 3. Grip coupling: a held sleeve/wrist drags the *defender's* arm
+            //    along — their wrist is re-solved onto the gripping hand, so the
+            //    pull reads on both bodies and the two hands stay connected.
+            //    A posting / cut / extracted arm is committed elsewhere — never
+            //    re-purpose it as a drag. (pose.ts computeScenePoses step 3.)
+            ArmPose topArmLFinal = DragArm('L', topMid.ArmL,
+                topIn.HasCutL || topIn.ArmExtractedL || (posted && postSide == 'L'),
+                bottomIn, bF, tF);
+            ArmPose topArmRFinal = DragArm('R', topMid.ArmR,
+                topIn.HasCutR || topIn.ArmExtractedR || (posted && postSide == 'R'),
+                bottomIn, bF, tF);
+            BodyPose topDragged = topMid;
+            topDragged.ArmL = topArmLFinal;
+            topDragged.ArmR = topArmRFinal;
 
-            return new ScenePoses { Bottom = bottomMid, Top = topMid };
+            // 4. Gaze.
+            LookAt(bottomMid, bF, tF.HeadPos, out float bp, out float by);
+            LookAt(topDragged, tF, bF.HeadPos, out float tp, out float ty);
+            bottomMid.HeadPitch = bp; bottomMid.HeadYaw = by;
+            topDragged.HeadPitch = tp; topDragged.HeadYaw = ty;
+
+            return new ScenePoses { Bottom = bottomMid, Top = topDragged };
         }
+
+        // A bottom hand GRIPPED on the defender's SLEEVE/WRIST (this side) —
+        // returns the gripping hand's world position, else null.
+        static bool GrippedHand(BottomPoseInputs bottomIn, BodyFrames bF, char zoneSide, out Vector3 grab)
+        {
+            GripZone sleeve = zoneSide == 'L' ? GripZone.SleeveL : GripZone.SleeveR;
+            GripZone wrist  = zoneSide == 'L' ? GripZone.WristL  : GripZone.WristR;
+            if (bottomIn.LeftHand.State == HandState.Gripped &&
+                (bottomIn.LeftHand.Target == sleeve || bottomIn.LeftHand.Target == wrist))
+            { grab = bF.HandL; return true; }
+            if (bottomIn.RightHand.State == HandState.Gripped &&
+                (bottomIn.RightHand.Target == sleeve || bottomIn.RightHand.Target == wrist))
+            { grab = bF.HandR; return true; }
+            grab = Vector3.zero;
+            return false;
+        }
+
+        static ArmPose DragArm(char side, ArmPose current, bool blocked,
+                               BottomPoseInputs bottomIn, BodyFrames bF, BodyFrames tF)
+        {
+            if (blocked) return current;
+            if (!GrippedHand(bottomIn, bF, side, out Vector3 grab)) return current;
+            Vector3 shoulder = side == 'L' ? tF.ShoulderL : tF.ShoulderR;
+            return SolveArmIK(grab, shoulder, tF.TorsoRot, side == 'L' ? -1f : 1f,
+                              Mathf.Max(current.Tremor, 0.3f), 0.15f);
+        }
+
+        // ---- Finish tableaux --------------------------------------------------
+        // Ported 1:1 from pose.ts computeFinishPoses. When a technique / counter
+        // / pass resolves, the FSM-driven pose stops telling the story — the
+        // bodies need to land in the recognisable end position of that move.
+        // tMs is time since confirmation (drives squeeze pulses + heavy breath).
+
+        public static FinishPoses ComputeFinishPoses(FinishKind kind, float tMs)
+        {
+            float breathB = Mathf.Sin((tMs / 1000f) * TWO_PI * 0.9f);
+            float breathT = Mathf.Sin((tMs / 1000f) * TWO_PI * 0.9f + Mathf.PI * 0.6f);
+            float squeeze = 0.5f + 0.5f * Mathf.Sin((tMs / 1000f) * TWO_PI * 1.2f);
+
+            BodyPose bottom = new BodyPose
+            {
+                PelvisX = 0, PelvisY = 0.28f, PelvisZ = 0,
+                PelvisPitch = -Mathf.PI / 2f + 0.15f, PelvisYaw = 0, PelvisRoll = 0,
+                TorsoPitch = 0.35f + breathB * 0.04f, TorsoYaw = 0, TorsoRoll = 0, TorsoTremor = 0,
+                HeadPitch = 0.55f, HeadYaw = 0,
+                Breath = breathB,
+                ArmL = MkArm(AttackRest.Pitch, AttackRest.Roll, AttackRest.Yaw, AttackRest.Elbow),
+                ArmR = MkArm(AttackRest.Pitch, AttackRest.Roll, AttackRest.Yaw, AttackRest.Elbow),
+                LegL = SolveLeg(LegDirLockedThigh, LegDirLockedShin),
+                LegR = SolveLeg(LegDirLockedThigh, LegDirLockedShin),
+            };
+            BodyPose top = new BodyPose
+            {
+                PelvisX = 0, PelvisY = 0.50f, PelvisZ = 0,
+                PelvisPitch = 0, PelvisYaw = 0, PelvisRoll = 0,
+                TorsoPitch = 0.10f + breathT * 0.03f, TorsoYaw = 0, TorsoRoll = 0, TorsoTremor = 0,
+                HeadPitch = 0.45f, HeadYaw = 0,
+                Breath = breathT,
+                ArmL = MkArm(DefenseRest.Pitch, DefenseRest.Roll, DefenseRest.Yaw, DefenseRest.Elbow),
+                ArmR = MkArm(DefenseRest.Pitch, DefenseRest.Roll, DefenseRest.Yaw, DefenseRest.Elbow),
+                LegL = new LegPose { HipPitch = -0.55f, HipYaw = 0, HipRoll = 0.30f, KneeBend = 2.0f },
+                LegR = new LegPose { HipPitch = -0.55f, HipYaw = 0, HipRoll = 0.30f, KneeBend = 2.0f },
+            };
+
+            switch (kind)
+            {
+                case FinishKind.Triangle:
+                    bottom.PelvisY = 0.34f + squeeze * 0.015f;
+                    bottom.TorsoPitch = 0.45f;
+                    bottom.LegR = SolveLeg(new Vector3(0.18f, -0.50f, 0.85f), new Vector3(-0.90f, -0.25f, -0.35f));
+                    bottom.LegL = SolveLeg(new Vector3(0.35f, -0.55f, 0.76f), new Vector3(-0.70f, -0.50f, -0.50f));
+                    bottom.ArmL = MkArm(-0.70f, 0.10f, -0.15f, 1.05f + squeeze * 0.08f, 0.5f, 0.9f);
+                    bottom.ArmR = MkArm(-0.70f, 0.10f, -0.15f, 1.05f + squeeze * 0.08f, 0.5f, 0.9f);
+                    top.PelvisY = 0.42f; top.PelvisZ = 0.18f;
+                    top.TorsoPitch = 0.85f; top.HeadPitch = 0.95f; top.TorsoTremor = 0.45f;
+                    top.ArmL = MkArm(-0.50f, 0.55f, 0.1f, 0.25f, 0.4f);
+                    top.ArmR = MkArm(-0.50f, 0.55f, 0.1f, 0.25f, 0.4f);
+                    break;
+                case FinishKind.Omoplata:
+                    bottom.PelvisYaw = 0.80f; bottom.PelvisY = 0.30f; bottom.TorsoPitch = 0.60f;
+                    bottom.LegL = SolveLeg(new Vector3(-0.35f, -0.55f, 0.75f), new Vector3(-0.60f, -0.70f, -0.30f));
+                    bottom.LegR = SolveLeg(new Vector3(0.70f, -0.50f, 0.40f), new Vector3(-0.20f, -0.90f, -0.20f));
+                    bottom.ArmL = MkArm(-0.50f, 0.15f, -0.10f, 0.70f, 0.3f);
+                    bottom.ArmR = MkArm(-0.55f, 0.20f, -0.10f, 0.65f, 0.3f);
+                    top.PelvisY = 0.34f; top.PelvisZ = 0.25f;
+                    top.TorsoPitch = 1.15f; top.HeadPitch = 1.0f; top.TorsoTremor = 0.35f;
+                    top.ArmL = MkArm(0.70f, 0.10f, -0.50f, 0.90f, 0.5f);
+                    top.ArmR = MkArm(-0.50f, 0.50f, 0.10f, 0.30f, 0.2f);
+                    break;
+                case FinishKind.ScissorSweep:
+                    bottom.PelvisY = 0.38f; bottom.PelvisZ = -0.12f; bottom.TorsoPitch = 0.85f; bottom.HeadPitch = 0.75f;
+                    bottom.LegR = SolveLeg(new Vector3(0.40f, -0.70f, 0.35f), new Vector3(-0.50f, -0.80f, -0.10f));
+                    bottom.LegL = SolveLeg(new Vector3(0.10f, -0.95f, 0.15f), new Vector3(0.10f, -0.90f, -0.30f));
+                    bottom.ArmL = MkArm(-0.70f, 0.10f, -0.10f, 0.90f, 0.3f, 0.9f);
+                    bottom.ArmR = MkArm(-0.70f, 0.10f, -0.10f, 0.90f, 0.3f, 0.9f);
+                    top.PelvisX = 0.50f; top.PelvisY = 0.28f; top.PelvisRoll = 1.30f;
+                    top.TorsoPitch = -0.15f; top.HeadPitch = -0.20f;
+                    top.ArmL = MkArm(-1.20f, 0.70f, 0.0f, 0.25f, 0.2f);
+                    top.ArmR = MkArm(-1.20f, 0.70f, 0.0f, 0.25f, 0.2f);
+                    top.LegL = new LegPose { HipPitch = -0.90f, HipYaw = 0, HipRoll = 0.35f, KneeBend = 1.0f };
+                    top.LegR = new LegPose { HipPitch = -0.40f, HipYaw = 0, HipRoll = 0.40f, KneeBend = 1.4f };
+                    break;
+                case FinishKind.FlowerSweep:
+                    bottom.PelvisY = 0.38f; bottom.PelvisZ = -0.12f; bottom.TorsoPitch = 0.85f; bottom.HeadPitch = 0.75f;
+                    bottom.LegL = SolveLeg(new Vector3(0.50f, -0.40f, 0.75f), new Vector3(-0.60f, -0.60f, -0.30f));
+                    bottom.LegR = SolveLeg(new Vector3(0.10f, -0.95f, 0.15f), new Vector3(0.10f, -0.90f, -0.30f));
+                    bottom.ArmL = MkArm(-0.70f, 0.10f, -0.10f, 0.90f, 0.3f, 0.9f);
+                    bottom.ArmR = MkArm(-0.70f, 0.10f, -0.10f, 0.90f, 0.3f, 0.9f);
+                    top.PelvisX = -0.50f; top.PelvisY = 0.28f; top.PelvisRoll = -1.30f;
+                    top.TorsoPitch = -0.15f; top.HeadPitch = -0.20f;
+                    top.ArmL = MkArm(-1.20f, 0.70f, 0.0f, 0.25f, 0.2f);
+                    top.ArmR = MkArm(-1.20f, 0.70f, 0.0f, 0.25f, 0.2f);
+                    top.LegL = new LegPose { HipPitch = -0.40f, HipYaw = 0, HipRoll = 0.40f, KneeBend = 1.4f };
+                    top.LegR = new LegPose { HipPitch = -0.90f, HipYaw = 0, HipRoll = 0.35f, KneeBend = 1.0f };
+                    break;
+                case FinishKind.HipBump:
+                    bottom.PelvisY = 0.42f; bottom.PelvisZ = -0.10f; bottom.TorsoPitch = 1.05f; bottom.HeadPitch = 0.20f;
+                    bottom.ArmR = MkArm(0.50f, 0.30f, 0.0f, 0.15f);
+                    bottom.ArmL = MkArm(-1.10f, 0.30f, -0.10f, 0.30f, 0.2f);
+                    bottom.LegL = SolveLeg(new Vector3(0.55f, -0.75f, 0.25f), new Vector3(-0.40f, -0.85f, -0.15f));
+                    bottom.LegR = SolveLeg(new Vector3(0.40f, -0.80f, 0.30f), new Vector3(-0.45f, -0.80f, -0.15f));
+                    top.PelvisY = 0.46f; top.PelvisZ = -0.18f; top.TorsoPitch = -0.45f; top.HeadPitch = -0.30f;
+                    top.ArmL = MkArm(-1.40f, 0.40f, 0.0f, 0.20f, 0.2f);
+                    top.ArmR = MkArm(-1.40f, 0.40f, 0.0f, 0.20f, 0.2f);
+                    top.LegL = new LegPose { HipPitch = -0.35f, HipYaw = 0, HipRoll = 0.35f, KneeBend = 1.6f };
+                    top.LegR = new LegPose { HipPitch = -0.35f, HipYaw = 0, HipRoll = 0.35f, KneeBend = 1.6f };
+                    break;
+                case FinishKind.CrossCollar:
+                    bottom.TorsoPitch = 0.60f;
+                    bottom.ArmL = MkArm(-0.80f, 0.05f, -0.55f, 0.85f + squeeze * 0.06f, 0.6f, 0.9f);
+                    bottom.ArmR = MkArm(-0.80f, 0.05f, -0.55f, 0.85f + squeeze * 0.06f, 0.6f, 0.9f);
+                    top.PelvisY = 0.44f; top.PelvisZ = 0.12f; top.TorsoPitch = 0.70f; top.HeadPitch = 1.0f; top.TorsoTremor = 0.4f;
+                    top.ArmL = MkArm(-0.35f, 0.30f, 0.0f, 0.30f, 0.3f);
+                    top.ArmR = MkArm(-0.35f, 0.30f, 0.0f, 0.30f, 0.3f);
+                    break;
+                case FinishKind.ScissorCounter:
+                    bottom.PelvisY = 0.22f; bottom.TorsoPitch = 0.10f; bottom.HeadPitch = 0.30f;
+                    bottom.ArmL = MkArm(ParriedArm.Pitch, ParriedArm.Roll, ParriedArm.Yaw, ParriedArm.Elbow);
+                    bottom.ArmR = MkArm(ParriedArm.Pitch, ParriedArm.Roll, ParriedArm.Yaw, ParriedArm.Elbow);
+                    bottom.LegL = SolveLeg(new Vector3(0.65f, -0.70f, 0.15f), new Vector3(-0.30f, -0.90f, -0.10f));
+                    bottom.LegR = SolveLeg(new Vector3(0.65f, -0.70f, 0.15f), new Vector3(-0.30f, -0.90f, -0.10f));
+                    top.PelvisY = 0.52f; top.TorsoPitch = -0.10f; top.HeadPitch = 0.35f;
+                    top.ArmL = MkArm(-0.55f, 0.20f, 0.0f, 0.20f);
+                    top.ArmR = MkArm(-0.55f, 0.20f, 0.0f, 0.20f);
+                    break;
+                case FinishKind.TriangleEarlyStack:
+                    bottom.PelvisY = 0.36f; bottom.TorsoPitch = 0.15f; bottom.HeadPitch = 0.70f;
+                    bottom.LegL = SolveLeg(new Vector3(0.25f, -0.35f, 0.90f), new Vector3(-0.75f, -0.35f, -0.40f));
+                    bottom.LegR = SolveLeg(new Vector3(0.25f, -0.35f, 0.90f), new Vector3(-0.75f, -0.35f, -0.40f));
+                    bottom.ArmL = MkArm(-0.60f, 0.25f, 0.0f, 0.60f, 0.3f);
+                    bottom.ArmR = MkArm(-0.60f, 0.25f, 0.0f, 0.60f, 0.3f);
+                    top.PelvisY = 0.55f; top.PelvisZ = 0.32f; top.TorsoPitch = 0.75f; top.HeadPitch = 0.7f; top.TorsoTremor = 0.3f;
+                    top.ArmL = MkArm(-0.90f, 0.25f, 0.0f, 0.10f, 0.2f);
+                    top.ArmR = MkArm(-0.90f, 0.25f, 0.0f, 0.10f, 0.2f);
+                    top.LegL = new LegPose { HipPitch = -0.30f, HipYaw = 0, HipRoll = 0.30f, KneeBend = 1.2f };
+                    top.LegR = new LegPose { HipPitch = -0.30f, HipYaw = 0, HipRoll = 0.30f, KneeBend = 1.2f };
+                    break;
+                case FinishKind.Scramble:
+                    bottom.PelvisY = 0.24f; bottom.PelvisPitch = -0.85f; bottom.TorsoPitch = 0.70f; bottom.HeadPitch = 0.10f;
+                    bottom.LegL = SolveLeg(new Vector3(0.50f, -0.65f, 0.40f), new Vector3(-0.15f, -0.55f, -0.80f));
+                    bottom.LegR = SolveLeg(new Vector3(0.50f, -0.65f, 0.40f), new Vector3(-0.15f, -0.55f, -0.80f));
+                    bottom.ArmL = MkArm(-0.90f, 0.20f, 0, 0.90f);
+                    bottom.ArmR = MkArm(-0.90f, 0.20f, 0, 0.90f);
+                    top.PelvisZ = -0.28f; top.PelvisY = 0.55f; top.TorsoPitch = 0.05f; top.HeadPitch = 0.30f;
+                    top.ArmL = MkArm(-0.95f, 0.20f, 0, 0.50f);
+                    top.ArmR = MkArm(-0.95f, 0.20f, 0, 0.50f);
+                    top.LegR = new LegPose { HipPitch = -1.30f, HipYaw = 0, HipRoll = 0.25f, KneeBend = 1.45f };
+                    break;
+                case FinishKind.Pass:
+                    bottom.PelvisY = 0.20f; bottom.TorsoPitch = 0.15f; bottom.HeadPitch = 0.35f;
+                    bottom.LegR = SolveLeg(new Vector3(-0.55f, -0.70f, 0.20f), new Vector3(-0.30f, -0.85f, -0.20f));
+                    bottom.LegL = SolveLeg(new Vector3(0.60f, -0.75f, 0.15f), new Vector3(0.30f, -0.90f, -0.15f));
+                    bottom.ArmL = MkArm(-0.75f, 0.15f, -0.20f, 0.70f, 0.2f, 0.9f);
+                    bottom.ArmR = MkArm(-0.60f, 0.20f, -0.35f, 0.55f, 0.2f, 0.9f);
+                    top.PelvisX = 0.50f; top.PelvisY = 0.38f; top.PelvisZ = 0.30f; top.PelvisYaw = -0.50f;
+                    top.TorsoPitch = 0.55f; top.HeadPitch = 0.55f;
+                    top.ArmL = MkArm(-0.75f, 0.20f, -0.10f, 0.60f, 0.2f);
+                    top.ArmR = MkArm(-0.75f, 0.20f, -0.10f, 0.60f, 0.2f);
+                    top.LegL = new LegPose { HipPitch = -0.15f, HipYaw = 0, HipRoll = 0.30f, KneeBend = 0.5f };
+                    top.LegR = new LegPose { HipPitch = -0.15f, HipYaw = 0, HipRoll = 0.35f, KneeBend = 0.6f };
+                    break;
+            }
+
+            // Execution phase: the first ~450 ms ramps motion finishes from a
+            // mid-action keyframe into the settled hold (smoothstep). Submissions
+            // stay as isometric holds.
+            float phaseT = Clamp01(tMs / 450f);
+            float phase = phaseT * phaseT * (3f - 2f * phaseT);
+            switch (kind)
+            {
+                case FinishKind.ScissorSweep:
+                case FinishKind.FlowerSweep:
+                {
+                    float sign = kind == FinishKind.ScissorSweep ? 1f : -1f;
+                    top.PelvisRoll = Ramp(sign * 0.35f, top.PelvisRoll, phase);
+                    top.PelvisX = Ramp(sign * 0.15f, top.PelvisX, phase);
+                    top.PelvisY = Ramp(0.45f, top.PelvisY, phase);
+                    bottom.TorsoPitch = Ramp(0.35f, bottom.TorsoPitch, phase);
+                    break;
+                }
+                case FinishKind.HipBump:
+                    bottom.TorsoPitch = Ramp(0.30f, bottom.TorsoPitch, phase);
+                    top.TorsoPitch = Ramp(0.15f, top.TorsoPitch, phase);
+                    top.PelvisZ = Ramp(0f, top.PelvisZ, phase);
+                    break;
+                case FinishKind.Pass:
+                    top.PelvisX = Ramp(0.10f, top.PelvisX, phase);
+                    top.PelvisZ = Ramp(0.05f, top.PelvisZ, phase);
+                    break;
+            }
+
+            return new FinishPoses { Bottom = bottom, Top = top };
+        }
+
+        static float Ramp(float from, float to, float phase) => from + (to - from) * phase;
     }
 }
