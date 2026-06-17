@@ -7,13 +7,21 @@
 //      the Stage-1 web prototype (pose.ts) uses, ported 1:1 to BJJPose.cs.
 //   3. Smooths every joint-angle channel with damped springs whose tuning
 //      mirrors blockman.ts (arm 5.5/0.65, leg 4.0/0.80, torso 3.0/0.90,
-//      pelvis 4.0/1.0), then adds the post-smoothing 13 Hz tremor jitter.
+//      pelvis 4.0/1.0), then adds the post-smoothing tremor jitter.
 //   4. Runs forward kinematics with BJJPose.Matrix3 — the EXACT matrices the
 //      validated FK / IK tests use — to get world-space joint positions, and
-//      places sphere joints + cylinder bones there. Driving by FK *position*
-//      (rather than re-applying Euler angles to Unity Transforms) sidesteps
-//      the Three.js↔Unity handedness/rotation-order mismatch entirely: the
-//      coordinates come straight out of BJJPose's own space.
+//      places sphere joints + cylinder bones there.
+//
+// Tier-7 realism layer (this file, visual only; pure logic lives in BJJPose):
+//   - Breathing: chest swells (x +4%, z +6%) and the shoulders rise / abduct
+//     with the breath oscillator (matches blockman.ts constants).
+//   - Muscle tension: grip strength swells the forearm/upper-arm radius;
+//     fatigue raises the tremor frequency and lowers its amplitude.
+//   - Ground contact: the stance (top) body is lifted so its lowest foot/knee
+//     rests on the mat (BJJPose.GroundRestOffsetY), and nudged back over its
+//     support base when the COM drifts out (BJJPose.ComInsideSupport).
+//   - Head look-at: a face indicator aims at the opponent — top → opponent
+//     head, bottom → opponent hip — via BJJPose.GazeTo (blend 0.6, ±60°).
 //
 // The skeleton is built procedurally in Awake, so no Inspector wiring is
 // needed — the scene runs headless and BJJ → Setup Scene just adds the
@@ -21,7 +29,6 @@
 //
 // Bottom = guard-side player (attacker intent). Top = passer-side (defender).
 
-using System.Collections.Generic;
 using UnityEngine;
 
 namespace BJJSimulator.Platform
@@ -32,6 +39,7 @@ namespace BJJSimulator.Platform
         [Header("Colours")]
         [SerializeField] private Color bottomColor = new Color(0.35f, 0.55f, 1.00f);
         [SerializeField] private Color topColor    = new Color(0.79f, 0.71f, 0.54f);
+        [SerializeField] private Color noseColor   = new Color(1.00f, 0.85f, 0.30f);
 
         [Header("Rig dimensions")]
         [SerializeField, Range(0.01f, 0.1f)] private float jointRadius = 0.045f;
@@ -55,16 +63,44 @@ namespace BJJSimulator.Platform
             var g = _manager.CurrentGameState;
             float nowMs = g.NowMs;
             float dt = Mathf.Clamp(Time.deltaTime, 0f, 0.1f);
-
             Intent? intent = _manager.Provider != null ? _manager.Provider.LastIntent : null;
             DefenseIntent? defense = _manager.Provider != null ? _manager.Provider.LastDefense : null;
+            RenderFrame(g, intent, defense, nowMs, dt);
+        }
 
+        // Public entry for the Editor capture tool: settle the rig onto a
+        // GameState in one shot (springs jump straight to target, no easing).
+        public void ApplyImmediate(GameState g, Intent? intent, DefenseIntent? defense, float nowMs)
+        {
+            if (_bottom == null) BuildRig();
+            _bottomSprings.Reset();
+            _topSprings.Reset();
+            RenderFrame(g, intent, defense, nowMs, 0f);
+        }
+
+        private void RenderFrame(GameState g, Intent? intent, DefenseIntent? defense, float nowMs, float dt)
+        {
             var bottomIn = BuildBottomInputs(g, intent, nowMs);
             var topIn    = BuildTopInputs(g, defense, nowMs);
             var scene    = BJJPose.ComputeScenePoses(bottomIn, topIn);
 
-            DriveBody(_bottom, _bottomSprings, scene.Bottom, BJJPose.BottomPlacement, nowMs, dt);
-            DriveBody(_top,    _topSprings,    scene.Top,    BJJPose.TopPlacement,    nowMs, dt);
+            float fatigueB = Mathf.Clamp01(1f - g.Bottom.Stamina);
+            float fatigueT = Mathf.Clamp01(1f - g.Top.Stamina);
+
+            RenderPose bp = ComputeRender(_bottomSprings, scene.Bottom, BJJPose.BottomPlacement, nowMs, dt, fatigueB);
+            RenderPose tp = ComputeRender(_topSprings,    scene.Top,    BJJPose.TopPlacement,    nowMs, dt, fatigueT);
+
+            // Ground contact + balance recovery — stance (top) body only; the
+            // supine bottom player rests on its back, not its feet.
+            GroundAndBalance(ref tp);
+
+            // Mutual head look-at: top eyes the opponent's head, bottom eyes the
+            // opponent's hip (it is looking up past the passer's base).
+            AimGaze(ref tp, bp.Head);
+            AimGaze(ref bp, tp.Pelvis);
+
+            Place(_bottom, bp);
+            Place(_top, tp);
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -137,35 +173,20 @@ namespace BJJSimulator.Platform
             };
         }
 
-        // Public entry for the Editor capture tool: settle the rig onto a
-        // GameState in one shot (springs jump straight to target, no easing).
-        public void ApplyImmediate(GameState g, Intent? intent, DefenseIntent? defense, float nowMs)
-        {
-            if (_bottom == null) BuildRig();
-            var bottomIn = BuildBottomInputs(g, intent, nowMs);
-            var topIn    = BuildTopInputs(g, defense, nowMs);
-            var scene    = BJJPose.ComputeScenePoses(bottomIn, topIn);
-            _bottomSprings.Reset();
-            _topSprings.Reset();
-            DriveBody(_bottom, _bottomSprings, scene.Bottom, BJJPose.BottomPlacement, nowMs, 0f);
-            DriveBody(_top,    _topSprings,    scene.Top,    BJJPose.TopPlacement,    nowMs, 0f);
-        }
-
         // ─────────────────────────────────────────────────────────────────────
-        // Per-body drive: spring-smooth angles → FK → place primitives
+        // Compute one body's world-space render pose (springs → FK)
         // ─────────────────────────────────────────────────────────────────────
 
-        private void DriveBody(Skeleton sk, SpringSet sp, BodyPose target,
-                               RigPlacement place, float nowMs, float dt)
+        private RenderPose ComputeRender(SpringSet sp, BodyPose target, RigPlacement place,
+                                         float nowMs, float dt, float fatigue)
         {
-            // 1. Smooth every angle channel toward the target pose.
             BodyPose p = sp.Step(target, dt);
 
-            // 2. Tremor / strain jitter, added *after* smoothing (a low-freq
-            //    spring would swallow the 13 Hz wobble). Mirrors blockman.ts.
-            float treL = Jitter(nowMs, target.ArmL.Tremor, 0.0f);
-            float treR = Jitter(nowMs, target.ArmR.Tremor, 2.4f);
-            float strain = Jitter(nowMs, target.TorsoTremor, 1.7f);
+            // Tremor / strain jitter, added *after* smoothing. Fatigue raises the
+            // frequency (faster shudder) and lowers the amplitude (finer shake).
+            float treL = Jitter(nowMs, target.ArmL.Tremor, 0.0f, fatigue);
+            float treR = Jitter(nowMs, target.ArmR.Tremor, 2.4f, fatigue);
+            float strain = Jitter(nowMs, target.TorsoTremor, 1.7f, fatigue);
 
             ArmPose armL = p.ArmL; armL.ShoulderPitch += treL; armL.ElbowBend += treL * 1.5f;
             ArmPose armR = p.ArmR; armR.ShoulderPitch += treR; armR.ElbowBend += treR * 1.5f;
@@ -173,61 +194,105 @@ namespace BJJSimulator.Platform
             p.TorsoPitch += strain;
             p.TorsoRoll  += strain * 0.7f;
 
-            // 3. Forward kinematics in BJJPose space (same Matrix3 the tests use).
             Matrix3 root = place.YawPi ? Matrix3.RotY(Mathf.PI) : Matrix3.Identity;
             Vector3 pelvisPos = place.Origin + new Vector3(p.PelvisX, p.PelvisY, p.PelvisZ);
             Matrix3 pelvisRot = Matrix3.Mul(root, Matrix3.EulerXYZ(p.PelvisPitch, p.PelvisYaw, p.PelvisRoll));
             Vector3 torsoPos = pelvisPos + pelvisRot.MulV(new Vector3(0, BJJPose.PelvisToTorso, 0));
             Matrix3 torsoRot = Matrix3.Mul(pelvisRot, Matrix3.EulerXYZ(p.TorsoPitch, p.TorsoYaw, p.TorsoRoll));
 
-            // Breath raises the shoulder line and swells the chest.
+            // Breath: chest swells, shoulders rise and abduct (scapular spread).
             float breath01 = target.Breath * 0.5f + 0.5f;
             float shoulderY = BJJPose.ShoulderY + breath01 * 0.012f;
+            float shoulderXMul = 1f + breath01 * 0.06f; // scapula abduction
 
             Vector3 neckPos = torsoPos + torsoRot.MulV(new Vector3(0, BJJPose.HeadY, 0));
             Matrix3 headRot = Matrix3.Mul(torsoRot, Matrix3.EulerXYZ(p.HeadPitch, p.HeadYaw, 0f));
             Vector3 headPos = neckPos + headRot.MulV(new Vector3(0, BJJPose.HeadCenterY, 0));
 
-            ArmFK(p.ArmL, -1f, torsoPos, torsoRot, shoulderY, out Vector3 shL, out Vector3 elL, out Vector3 haL);
-            ArmFK(p.ArmR,  1f, torsoPos, torsoRot, shoulderY, out Vector3 shR, out Vector3 elR, out Vector3 haR);
-            LegFK(p.LegL, -1f, pelvisPos, pelvisRot, out Vector3 hpL, out Vector3 knL, out Vector3 anL, out Vector3 toL);
-            LegFK(p.LegR,  1f, pelvisPos, pelvisRot, out Vector3 hpR, out Vector3 knR, out Vector3 anR, out Vector3 toR);
+            var rp = new RenderPose
+            {
+                Pelvis = pelvisPos, Chest = torsoPos, Head = headPos, NeckPivot = neckPos,
+                TorsoRot = torsoRot, Breath01 = breath01,
+                GripL = p.ArmL.Grip, GripR = p.ArmR.Grip,
+                HeadPitch = p.HeadPitch, HeadYaw = p.HeadYaw,
+            };
+            ArmFK(p.ArmL, -1f, torsoPos, torsoRot, shoulderY, shoulderXMul, out rp.ShoulderL, out rp.ElbowL, out rp.HandL);
+            ArmFK(p.ArmR,  1f, torsoPos, torsoRot, shoulderY, shoulderXMul, out rp.ShoulderR, out rp.ElbowR, out rp.HandR);
+            LegFK(p.LegL, -1f, pelvisPos, pelvisRot, out rp.HipL, out rp.KneeL, out rp.AnkleL, out rp.ToeL);
+            LegFK(p.LegR,  1f, pelvisPos, pelvisRot, out rp.HipR, out rp.KneeR, out rp.AnkleR, out rp.ToeR);
+            return rp;
+        }
 
-            // 4. Place joints.
-            sk.Pelvis.position = pelvisPos;
-            sk.Chest.position  = torsoPos;
-            sk.Head.position   = headPos;
-            sk.ShoulderL.position = shL; sk.ShoulderR.position = shR;
-            sk.ElbowL.position = elL;    sk.ElbowR.position = elR;
-            sk.HandL.position  = haL;    sk.HandR.position  = haR;
-            sk.HipL.position   = hpL;    sk.HipR.position   = hpR;
-            sk.KneeL.position  = knL;    sk.KneeR.position  = knR;
-            sk.AnkleL.position = anL;    sk.AnkleR.position = anR;
+        // Lift the body so its lowest foot/knee/hand rests on the mat, then nudge
+        // it back over the support base if the COM has drifted outside.
+        private void GroundAndBalance(ref RenderPose rp)
+        {
+            float lift = BJJPose.GroundRestOffsetY(0f,
+                rp.AnkleL.y, rp.AnkleR.y, rp.ToeL.y, rp.ToeR.y,
+                rp.KneeL.y, rp.KneeR.y, rp.HandL.y, rp.HandR.y);
+            if (lift > 0f) Shift(ref rp, new Vector3(0f, lift, 0f));
 
-            // Grip → hand swell (open palm splayed, fist compact). blockman.ts.
-            sk.HandL.localScale = HandScale(p.ArmL.Grip);
-            sk.HandR.localScale = HandScale(p.ArmR.Grip);
-            // Chest swells with the breath.
-            sk.Chest.localScale = Vector3.one * (jointRadius * 2f) * (1f + breath01 * 0.10f);
+            // Support base = whatever is (now) near the mat; COM ≈ chest+pelvis.
+            var contacts = NearGround(rp);
+            if (contacts.Length >= 3)
+            {
+                Vector3 com = (rp.Chest + rp.Pelvis) * 0.5f;
+                Vector2 comXZ = new Vector2(com.x, com.z);
+                if (!BJJPose.ComInsideSupport(comXZ, contacts))
+                {
+                    Vector2 centroid = Centroid(contacts);
+                    Vector3 nudge = new Vector3(centroid.x - comXZ.x, 0f, centroid.y - comXZ.y) * 0.18f;
+                    nudge = Vector3.ClampMagnitude(nudge, 0.08f);
+                    Shift(ref rp, nudge);
+                }
+            }
+        }
 
-            // 5. Stretch bones between joints.
-            Bone(sk.SpineBone, pelvisPos, torsoPos);
-            // Neck/spine column: span the full chest→head gap so the head reads
-            // as attached (the head pivot sits HeadY above the chest).
-            Bone(sk.NeckBone,  torsoPos,  headPos);
-            Bone(sk.ClavLBone, torsoPos,  shL);  Bone(sk.ClavRBone, torsoPos,  shR);
-            Bone(sk.UpArmLBone, shL, elL);        Bone(sk.UpArmRBone, shR, elR);
-            Bone(sk.LoArmLBone, elL, haL);        Bone(sk.LoArmRBone, elR, haR);
-            Bone(sk.PelvLBone, pelvisPos, hpL);   Bone(sk.PelvRBone, pelvisPos, hpR);
-            Bone(sk.ThighLBone, hpL, knL);        Bone(sk.ThighRBone, hpR, knR);
-            Bone(sk.ShinLBone,  knL, anL);        Bone(sk.ShinRBone,  knR, anR);
-            Bone(sk.FootLBone,  anL, toL);        Bone(sk.FootRBone,  anR, toR);
+        private Vector2[] NearGround(RenderPose rp)
+        {
+            // Joints within 6 cm of the mat count as support contacts.
+            var cands = new[] { rp.AnkleL, rp.AnkleR, rp.ToeL, rp.ToeR, rp.KneeL, rp.KneeR, rp.HandL, rp.HandR };
+            int n = 0;
+            for (int i = 0; i < cands.Length; i++) if (cands[i].y < 0.06f) n++;
+            var outArr = new Vector2[n];
+            int j = 0;
+            for (int i = 0; i < cands.Length; i++)
+                if (cands[i].y < 0.06f) outArr[j++] = new Vector2(cands[i].x, cands[i].z);
+            return outArr;
+        }
+
+        private static Vector2 Centroid(Vector2[] pts)
+        {
+            Vector2 s = Vector2.zero;
+            for (int i = 0; i < pts.Length; i++) s += pts[i];
+            return s / pts.Length;
+        }
+
+        private static void Shift(ref RenderPose rp, Vector3 d)
+        {
+            rp.Pelvis += d; rp.Chest += d; rp.Head += d; rp.NeckPivot += d;
+            rp.ShoulderL += d; rp.ShoulderR += d; rp.ElbowL += d; rp.ElbowR += d;
+            rp.HandL += d; rp.HandR += d;
+            rp.HipL += d; rp.HipR += d; rp.KneeL += d; rp.KneeR += d;
+            rp.AnkleL += d; rp.AnkleR += d; rp.ToeL += d; rp.ToeR += d;
+        }
+
+        // Aim the face indicator at a world target (blend 0.6, ±60° yaw).
+        private void AimGaze(ref RenderPose rp, Vector3 target)
+        {
+            BJJPose.GazeTo(rp.NeckPivot, rp.TorsoRot, target,
+                rp.HeadPitch, rp.HeadYaw, 0.6f, 1.0472f, -0.6f, 1.1f,
+                out float pitch, out float yaw);
+            // Face = torsoRot · Rx(pitch) · Ry(yaw) · ẑ.
+            Matrix3 faceRot = Matrix3.Mul(rp.TorsoRot, Matrix3.EulerXYZ(pitch, yaw, 0f));
+            rp.GazeNose = rp.Head + faceRot.MulV(new Vector3(0, 0, jointRadius * 1.6f));
         }
 
         private static void ArmFK(ArmPose arm, float side, Vector3 torsoPos, Matrix3 torsoRot,
-                                  float shoulderY, out Vector3 shoulder, out Vector3 elbow, out Vector3 hand)
+                                  float shoulderY, float shoulderXMul,
+                                  out Vector3 shoulder, out Vector3 elbow, out Vector3 hand)
         {
-            shoulder = torsoPos + torsoRot.MulV(new Vector3(BJJPose.ShoulderX * side, shoulderY, 0));
+            shoulder = torsoPos + torsoRot.MulV(new Vector3(BJJPose.ShoulderX * shoulderXMul * side, shoulderY, 0));
             Matrix3 armRot = Matrix3.Mul(torsoRot,
                 Matrix3.EulerYXZ(arm.ShoulderPitch, arm.ShoulderYaw * side, arm.ShoulderRoll * side));
             elbow = shoulder + armRot.MulV(new Vector3(0, -BJJPose.UpperArm, 0));
@@ -244,9 +309,46 @@ namespace BJJSimulator.Platform
             knee = hip + legRot.MulV(new Vector3(0, -BJJPose.Thigh, 0));
             Matrix3 shinRot = Matrix3.Mul(legRot, Matrix3.RotX(leg.KneeBend));
             ankle = knee + shinRot.MulV(new Vector3(0, -BJJPose.Shin, 0));
-            // Short foot segment: ankle plantarflex (+) points the toes.
             Matrix3 footRot = Matrix3.Mul(shinRot, Matrix3.RotX(leg.Ankle));
             toe = ankle + footRot.MulV(new Vector3(0, 0, 0.12f));
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Place primitives from a computed RenderPose
+        // ─────────────────────────────────────────────────────────────────────
+
+        private void Place(Skeleton sk, RenderPose rp)
+        {
+            sk.Pelvis.position = rp.Pelvis;
+            sk.Chest.position  = rp.Chest;
+            sk.Head.position   = rp.Head;
+            sk.ShoulderL.position = rp.ShoulderL; sk.ShoulderR.position = rp.ShoulderR;
+            sk.ElbowL.position = rp.ElbowL;       sk.ElbowR.position = rp.ElbowR;
+            sk.HandL.position  = rp.HandL;        sk.HandR.position  = rp.HandR;
+            sk.HipL.position   = rp.HipL;         sk.HipR.position   = rp.HipR;
+            sk.KneeL.position  = rp.KneeL;        sk.KneeR.position  = rp.KneeR;
+            sk.AnkleL.position = rp.AnkleL;       sk.AnkleR.position = rp.AnkleR;
+            sk.Nose.position   = rp.GazeNose;
+
+            // Grip → hand swell (open palm splayed, fist compact). blockman.ts.
+            sk.HandL.localScale = HandScale(rp.GripL);
+            sk.HandR.localScale = HandScale(rp.GripR);
+            // Chest swells with the breath (x +4%, z +6% — matches blockman.ts).
+            float d = jointRadius * 2f;
+            sk.Chest.localScale = new Vector3(d * (1f + rp.Breath01 * 0.04f), d, d * (1f + rp.Breath01 * 0.06f));
+
+            // Bones. Arm bones thicken with grip (muscle tension).
+            float gripMulL = 1f + Mathf.Clamp01(rp.GripL) * 0.5f;
+            float gripMulR = 1f + Mathf.Clamp01(rp.GripR) * 0.5f;
+            Bone(sk.SpineBone, rp.Pelvis, rp.Chest);
+            Bone(sk.NeckBone,  rp.Chest,  rp.Head); // full chest→head span
+            Bone(sk.ClavLBone, rp.Chest,  rp.ShoulderL);  Bone(sk.ClavRBone, rp.Chest,  rp.ShoulderR);
+            Bone(sk.UpArmLBone, rp.ShoulderL, rp.ElbowL, gripMulL); Bone(sk.UpArmRBone, rp.ShoulderR, rp.ElbowR, gripMulR);
+            Bone(sk.LoArmLBone, rp.ElbowL, rp.HandL, gripMulL);     Bone(sk.LoArmRBone, rp.ElbowR, rp.HandR, gripMulR);
+            Bone(sk.PelvLBone, rp.Pelvis, rp.HipL);   Bone(sk.PelvRBone, rp.Pelvis, rp.HipR);
+            Bone(sk.ThighLBone, rp.HipL, rp.KneeL);   Bone(sk.ThighRBone, rp.HipR, rp.KneeR);
+            Bone(sk.ShinLBone,  rp.KneeL, rp.AnkleL); Bone(sk.ShinRBone,  rp.KneeR, rp.AnkleR);
+            Bone(sk.FootLBone,  rp.AnkleL, rp.ToeL);  Bone(sk.FootRBone,  rp.AnkleR, rp.ToeR);
         }
 
         private Vector3 HandScale(float grip)
@@ -256,20 +358,24 @@ namespace BJJSimulator.Platform
             return new Vector3(d * (1.55f - g * 0.75f), d * (0.62f + g * 0.33f), d * (1.42f - g * 0.62f));
         }
 
-        private static float Jitter(float nowMs, float amp, float phase)
+        // Fatigue raises the shudder frequency and trims its amplitude.
+        private static float Jitter(float nowMs, float amp, float phase, float fatigue)
         {
             if (amp <= 0f) return 0f;
-            return Mathf.Sin((nowMs / 1000f) * 2f * Mathf.PI * 13f + phase) * amp * 0.06f;
+            float hz = 13f * (1f + fatigue * 0.6f);
+            float ampScale = 1f - fatigue * 0.4f;
+            return Mathf.Sin((nowMs / 1000f) * 2f * Mathf.PI * hz + phase) * amp * 0.06f * ampScale;
         }
 
-        private void Bone(Transform bone, Vector3 a, Vector3 b)
+        private void Bone(Transform bone, Vector3 a, Vector3 b, float radiusMul = 1f)
         {
             Vector3 d = b - a;
             float len = d.magnitude;
             bone.position = (a + b) * 0.5f;
             if (len > 1e-5f) bone.rotation = Quaternion.FromToRotation(Vector3.up, d / len);
             // Default cylinder is 2 units tall along Y → scale.y = len / 2.
-            bone.localScale = new Vector3(boneRadius * 2f, Mathf.Max(len * 0.5f, 1e-4f), boneRadius * 2f);
+            float r = boneRadius * 2f * radiusMul;
+            bone.localScale = new Vector3(r, Mathf.Max(len * 0.5f, 1e-4f), r);
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -295,11 +401,13 @@ namespace BJJSimulator.Platform
             var root = rootGo.transform;
 
             var mat = MakeMaterial(color);
+            var noseMat = MakeMaterial(noseColor);
             var sk = new Skeleton();
 
             sk.Pelvis    = Joint(root, "Pelvis", mat);
             sk.Chest     = Joint(root, "Chest", mat);
             sk.Head      = Joint(root, "Head", mat, 1.4f);
+            sk.Nose      = Joint(root, "Nose", noseMat, 0.5f); // gaze indicator
             sk.ShoulderL = Joint(root, "ShoulderL", mat);
             sk.ShoulderR = Joint(root, "ShoulderR", mat);
             sk.ElbowL    = Joint(root, "ElbowL", mat);
@@ -380,9 +488,19 @@ namespace BJJSimulator.Platform
         // Data
         // ─────────────────────────────────────────────────────────────────────
 
+        private struct RenderPose
+        {
+            public Vector3 Pelvis, Chest, Head, NeckPivot;
+            public Vector3 ShoulderL, ShoulderR, ElbowL, ElbowR, HandL, HandR;
+            public Vector3 HipL, HipR, KneeL, KneeR, AnkleL, AnkleR, ToeL, ToeR;
+            public Vector3 GazeNose;
+            public Matrix3 TorsoRot;
+            public float Breath01, GripL, GripR, HeadPitch, HeadYaw;
+        }
+
         private class Skeleton
         {
-            public Transform Pelvis, Chest, Head;
+            public Transform Pelvis, Chest, Head, Nose;
             public Transform ShoulderL, ShoulderR, ElbowL, ElbowR, HandL, HandR;
             public Transform HipL, HipR, KneeL, KneeR, AnkleL, AnkleR;
             public Transform SpineBone, NeckBone, ClavLBone, ClavRBone;

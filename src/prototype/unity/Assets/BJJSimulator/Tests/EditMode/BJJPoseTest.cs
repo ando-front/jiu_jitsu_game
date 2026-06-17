@@ -270,5 +270,44 @@ namespace BJJSimulator.Tests
             Assert.That(Mathf.Abs(a.Bottom.Breath - b.Bottom.Breath), Is.GreaterThan(1e-4f));
             Assert.That(Mathf.Abs(a.Bottom.ArmL.ElbowBend - b.Bottom.ArmL.ElbowBend), Is.GreaterThan(1e-4f));
         }
+
+        // --- Realism helpers (Tier 7) -----------------------------------------
+
+        [Test]
+        public void GroundRestOffset_LiftsLowestContactToMat()
+        {
+            Assert.That(BJJPose.GroundRestOffsetY(0f, -0.1f, 0.2f, 0.05f), Is.EqualTo(0.1f).Within(1e-6f));
+            Assert.That(BJJPose.GroundRestOffsetY(0f, 0.1f, 0.2f), Is.EqualTo(0f));        // nothing penetrates
+            Assert.That(BJJPose.GroundRestOffsetY(0.5f, 0.2f), Is.EqualTo(0.3f).Within(1e-6f));
+        }
+
+        [Test]
+        public void ComInsideSupport_DetectsBalance()
+        {
+            var square = new[]
+            {
+                new Vector2(-1f, -1f), new Vector2(1f, -1f),
+                new Vector2(1f, 1f),  new Vector2(-1f, 1f),
+            };
+            Assert.IsTrue(BJJPose.ComInsideSupport(new Vector2(0f, 0f), square));   // centred
+            Assert.IsTrue(BJJPose.ComInsideSupport(new Vector2(0.9f, 0.9f), square));
+            Assert.IsFalse(BJJPose.ComInsideSupport(new Vector2(2f, 2f), square));  // toppling out
+            Assert.IsFalse(BJJPose.ComInsideSupport(new Vector2(0f, 0f),
+                new[] { new Vector2(0f, 0f), new Vector2(1f, 0f) }));               // <3 = unstable
+        }
+
+        [Test]
+        public void GazeTo_TurnsTowardTargetAndClamps()
+        {
+            // Target to the right (+x) in an identity torso frame → positive yaw.
+            BJJPose.GazeTo(Vector3.zero, Matrix3.Identity, new Vector3(1f, 0f, 1f),
+                0f, 0f, 0.6f, 1.0472f, -0.6f, 1.1f, out _, out float yaw);
+            Assert.That(yaw, Is.GreaterThan(0f));
+
+            // Hard right → clamped to the ±60° (1.0472 rad) limit.
+            BJJPose.GazeTo(Vector3.zero, Matrix3.Identity, new Vector3(20f, 0f, 0.01f),
+                0f, 0f, 1.0f, 1.0472f, -0.6f, 1.1f, out _, out float clamped);
+            Assert.That(clamped, Is.EqualTo(1.0472f).Within(1e-4f));
+        }
     }
 }
