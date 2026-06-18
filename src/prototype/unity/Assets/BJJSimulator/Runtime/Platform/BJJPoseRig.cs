@@ -58,6 +58,14 @@ namespace BJJSimulator.Platform
         private readonly Anim _bottomAnim = new Anim();
         private readonly Anim _topAnim    = new Anim();
 
+        // Tier-9: whole-body weight-shift sway, inertial yaw lag, breath-synced
+        // shoulders. Stepped on the fixed clock (FixedUpdate); read at render.
+        private Vector3 _weightShiftPos, _weightShiftVel, _weightShiftTarget;
+        private int     _weightShiftSig = int.MinValue;
+        private float   _inertialYaw, _inertialYawVel;
+        private float   _breathPhase;
+        private float   _gripTension; // last body's grip strength (breath damping)
+
         // Per-body transient animation state (anticipation windup + body wave).
         private sealed class Anim
         {
@@ -71,6 +79,13 @@ namespace BJJSimulator.Platform
         // Body-wave timing: pelvis → torso → shoulders → hands, 50 ms apart.
         private const float RippleStepMs = 50f;
         private const float AnticipWindowMs = 130f; // 0.13 s reverse load
+
+        // Tier-9 spring tunings (weight shift / inertial yaw) + breath sync.
+        private const float WeightShiftFreq = 2.5f, WeightShiftZeta = 0.7f;
+        private const float InertialYawFreq = 3.0f, InertialYawZeta = 0.8f;
+        private const float BreathPhaseHz    = 0.5f;  // shoulder-breath oscillator
+        private const float InertialYawBlend = 0.4f;  // fraction applied to root yaw
+        private const float WeightShiftRange = 0.05f; // ±COM target on a switch (m)
 
         void Awake()
         {
@@ -89,6 +104,32 @@ namespace BJJSimulator.Platform
             RenderFrame(g, intent, defense, nowMs, dt);
         }
 
+        // Tier-9 whole-body dynamics run on the fixed clock so the springs see a
+        // steady timestep (the render reads the settled values each LateUpdate).
+        void FixedUpdate()
+        {
+            if (_manager == null) return;
+            var g = _manager.CurrentGameState;
+            float dt = Time.fixedDeltaTime;
+
+            // Weight shift: committing a new technique nudges the COM target a
+            // random ±5 cm; the body sways toward it on a 2.5 Hz / ζ0.7 spring.
+            int sig = BottomActionSig(g);
+            if (sig != _weightShiftSig)
+            {
+                _weightShiftSig = sig;
+                _weightShiftTarget = new Vector3(
+                    Random.Range(-WeightShiftRange, WeightShiftRange), 0f,
+                    Random.Range(-WeightShiftRange, WeightShiftRange));
+            }
+            StepWeightShift(ref _weightShiftPos, ref _weightShiftVel, _weightShiftTarget, dt);
+
+            // Inertial yaw: the heavy stack lags behind its commanded facing
+            // (lateral posture break) on a 3.0 Hz / ζ0.8 spring — a late turn.
+            float targetYaw = Mathf.Clamp(g.Top.PostureBreak.X, -1f, 1f) * 0.25f;
+            StepInertialYaw(ref _inertialYaw, ref _inertialYawVel, targetYaw, dt);
+        }
+
         // Public entry for the Editor capture tool: settle the rig onto a
         // GameState in one shot (springs jump straight to target, no easing).
         public void ApplyImmediate(GameState g, Intent? intent, DefenseIntent? defense, float nowMs)
@@ -100,6 +141,10 @@ namespace BJJSimulator.Platform
             _topSecondary.Reset();
             ResetAnim(_bottomAnim);
             ResetAnim(_topAnim);
+            _weightShiftPos = _weightShiftVel = _weightShiftTarget = Vector3.zero;
+            _weightShiftSig = int.MinValue;
+            _inertialYaw = _inertialYawVel = 0f;
+            _breathPhase = 0f; _gripTension = 0f;
             RenderFrame(g, intent, defense, nowMs, 0f);
         }
 
@@ -114,6 +159,10 @@ namespace BJJSimulator.Platform
             var bottomIn = BuildBottomInputs(g, intent, nowMs);
             var topIn    = BuildTopInputs(g, defense, nowMs);
             var scene    = BJJPose.ComputeScenePoses(bottomIn, topIn);
+
+            // Advance the breath oscillator used for the shoulder rise/fall, and
+            // wrap it so the phase never grows unbounded across a long match.
+            _breathPhase = Mathf.Repeat(_breathPhase + dt * 2f * Mathf.PI * BreathPhaseHz, 2f * Mathf.PI);
 
             float fatigueB = Mathf.Clamp01(1f - g.Bottom.Stamina);
             float fatigueT = Mathf.Clamp01(1f - g.Top.Stamina);
@@ -135,6 +184,13 @@ namespace BJJSimulator.Platform
                 scene.Bottom, BJJPose.BottomPlacement, nowMs, dt, fatigueB, roundB);
             RenderPose tp = ComputeRender(_topSprings, _topSecondary, _topAnim,
                 scene.Top, BJJPose.TopPlacement, nowMs, dt, fatigueT, roundT);
+
+            // Weight shift: translate the guard-bottom body by the swaying COM
+            // offset (its pelvis-rooted FK chain moves with it).
+            if (_weightShiftPos != Vector3.zero) Shift(ref bp, _weightShiftPos);
+
+            // Inertial yaw: the whole rig root turns late, lagging the command.
+            transform.localRotation = Quaternion.Euler(0f, Mathf.Rad2Deg * _inertialYaw * InertialYawBlend, 0f);
 
             // Ground contact + balance recovery — stance (top) body only; the
             // supine bottom player rests on its back, not its feet.
@@ -208,6 +264,33 @@ namespace BJJSimulator.Platform
                         break;
                 }
             }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Whole-body dynamics (Tier 9) — pure, deterministic, unit-testable
+        // ─────────────────────────────────────────────────────────────────────
+
+        // Damped-spring step of the 3-axis COM weight-shift offset toward target.
+        public static void StepWeightShift(ref Vector3 pos, ref Vector3 vel, Vector3 target, float dt)
+        {
+            float x = pos.x, y = pos.y, z = pos.z, vx = vel.x, vy = vel.y, vz = vel.z;
+            BJJPose.IntegrateSpring(ref x, ref vx, target.x, WeightShiftFreq, WeightShiftZeta, dt);
+            BJJPose.IntegrateSpring(ref y, ref vy, target.y, WeightShiftFreq, WeightShiftZeta, dt);
+            BJJPose.IntegrateSpring(ref z, ref vz, target.z, WeightShiftFreq, WeightShiftZeta, dt);
+            pos = new Vector3(x, y, z); vel = new Vector3(vx, vy, vz);
+        }
+
+        // Damped-spring step of the body's inertial yaw toward the commanded yaw.
+        public static void StepInertialYaw(ref float yaw, ref float vel, float target, float dt)
+        {
+            BJJPose.IntegrateSpring(ref yaw, ref vel, target, InertialYawFreq, InertialYawZeta, dt);
+        }
+
+        // Shoulder rise/fall synced to the breath oscillator; a tighter grip
+        // (higher match intensity) damps the amplitude (shallower breathing).
+        public static float ShoulderBreathOffset(float breathPhase, float gripTension)
+        {
+            return Mathf.Sin(breathPhase) * 0.008f * (1f - Mathf.Clamp01(gripTension) * 0.5f);
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -341,8 +424,13 @@ namespace BJJSimulator.Platform
             Matrix3 torsoRot = Matrix3.Mul(rotUp, Matrix3.Mul(Matrix3.RotY(p.TorsoYaw), Matrix3.RotZ(p.TorsoRoll)));
 
             // Breath: chest swells, shoulders rise and abduct (scapular spread).
+            // Tier-9 adds a sin(breathPhase) shoulder bob whose amplitude shrinks
+            // as the grip tightens (a braced, high-intensity exchange breathes
+            // shallow). _gripTension = this body's strongest grip channel.
+            _gripTension = Mathf.Clamp01(Mathf.Max(p.ArmL.Grip, p.ArmR.Grip));
+            float shoulderBreath = ShoulderBreathOffset(_breathPhase, _gripTension);
             float breath01 = target.Breath * 0.5f + 0.5f;
-            float shoulderY = BJJPose.ShoulderY + breath01 * 0.012f;
+            float shoulderY = BJJPose.ShoulderY + breath01 * 0.012f + shoulderBreath;
             float shoulderXMul = 1f + breath01 * 0.06f; // scapula abduction
 
             Vector3 neckPos = torsoPos + torsoRot.MulV(new Vector3(0, BJJPose.HeadY, 0));
