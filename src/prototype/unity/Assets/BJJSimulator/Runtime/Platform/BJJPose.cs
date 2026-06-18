@@ -851,6 +851,82 @@ namespace BJJSimulator.Platform
             yaw = Mathf.Clamp(baseYaw * (1f - blend) + y * blend, -yawClampRad, yawClampRad);
         }
 
+        // ---- Realism helpers (Tier 8: secondary motion, spine, fingers) -------
+        // Pure, EditMode-tested cores for the four new visual layers. The rig
+        // (BJJPoseRig) owns the per-channel state; these supply the maths.
+
+        // Sub-stepped semi-implicit Euler damped-spring integrator. Identical
+        // numerics to SpringSet/blockman.ts stepSpring, factored out so the
+        // primary smoother AND the secondary-motion oscillator share one code
+        // path. 8 ms substeps keep stiff springs stable across frame hitches.
+        public const float SpringSubstepS = 0.008f;
+
+        public static void IntegrateSpring(ref float x, ref float v, float target,
+                                           float freqHz, float zeta, float dtS)
+        {
+            float w = 2f * Mathf.PI * freqHz;
+            float remaining = Mathf.Min(dtS, 0.1f);
+            while (remaining > 0f)
+            {
+                float h = Mathf.Min(SpringSubstepS, remaining);
+                float a = -w * w * (x - target) - 2f * zeta * w * v;
+                v += a * h;
+                x += v * h;
+                remaining -= h;
+            }
+        }
+
+        // Spine S-curve: split one torso pitch into lower / mid / upper segment
+        // pitches that sum to the original (so the chest still lands where the
+        // single-bone FK put it), then add a zero-sum S perturbation scaled by
+        // `round`. round > 0 rounds the UPPER back forward while the lumbar
+        // arches (guard-bottom turtle); round < 0 extends a tall, stacked
+        // passer spine. Sum is preserved for any round.
+        public static void SpineSCurve(float torsoPitch, float round,
+                                       out float lower, out float mid, out float upper)
+        {
+            float baseSeg = torsoPitch / 3f;
+            const float k = 0.5f; // S amplitude per unit round
+            lower = baseSeg - round * k; // lumbar arches the opposite way…
+            mid   = baseSeg;             // …pivoting through a neutral mid…
+            upper = baseSeg + round * k; // …so the thoracic rounds forward.
+        }
+
+        // Finger curl angle (radians) for one knuckle of a clenching hand.
+        // joint 0 = MCP (base), 1 = PIP (middle), 2 = DIP (tip). grip 0 = a
+        // flat splayed hand, grip 1 = a closed fist. Each joint folds
+        // progressively as the grip squeezes; the base knuckle leads.
+        static readonly float[] FingerFistCurl = { 1.50f, 1.75f, 1.20f };
+
+        public static float FingerCurl(float grip, int joint)
+        {
+            int j = joint < 0 ? 0 : (joint > 2 ? 2 : joint);
+            return Mathf.Clamp01(grip) * FingerFistCurl[j];
+        }
+
+        // Anticipation: a brief reverse offset injected when a big technique is
+        // selected — weight loads the *opposite* way before the spring whips
+        // forward. Returns 0 outside [0, windowMs]; a smooth negative half-sine
+        // peaking at -magnitude at the midpoint inside it.
+        public static float AnticipationOffset(float elapsedMs, float windowMs, float magnitude)
+        {
+            if (windowMs <= 0f || elapsedMs <= 0f || elapsedMs >= windowMs) return 0f;
+            return -magnitude * Mathf.Sin(Mathf.PI * (elapsedMs / windowMs));
+        }
+
+        // Impact ripple gate: did body-wave segment `segIndex` (which fires at
+        // segIndex * stepMs after the impact) get crossed between the previous
+        // and current elapsed time? Used to kick a travelling wave through
+        // pelvis → torso → shoulder → hand at `stepMs` intervals, exactly once
+        // each. Elapsed time is measured from the impact, so an inactive ripple
+        // keeps elapsed negative (every segment trigger >= 0 stays un-crossed).
+        public static bool RippleFired(float prevElapsedMs, float elapsedMs, int segIndex, float stepMs)
+        {
+            if (stepMs <= 0f) return false;
+            float trigger = segIndex * stepMs;
+            return prevElapsedMs < trigger && elapsedMs >= trigger;
+        }
+
         // ---- Two-bone arm IK --------------------------------------------------
 
         public static ArmPose SolveArmIK(Vector3 targetWorld, Vector3 shoulderWorld, Matrix3 torsoRot,
