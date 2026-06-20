@@ -22,10 +22,15 @@ using System.Collections.Generic;
 namespace BJJSimulator
 {
     // -------------------------------------------------------------------------
-    // Guard state (one-way CLOSED → OPEN when both bottom feet are UNLOCKED)
+    // Guard state. CLOSED → OPEN is the one-way guard break (both bottom feet
+    // UNLOCKED); OPEN → SIDE_CONTROL is the completed guard pass.
     // -------------------------------------------------------------------------
 
-    public enum GuardState { Closed, Open }
+    public enum GuardState { Closed, Open, SideControl }
+
+    // Sweep lifecycle (bottom reverses top). None until a sweep technique
+    // confirms, then Completed for the rest of the exchange.
+    public enum SweepState { None, InProgress, Completed }
 
     // -------------------------------------------------------------------------
     // Shared actor state (owned by GameState, referenced by predicate callers)
@@ -81,6 +86,13 @@ namespace BJJSimulator
         public ActorState      Bottom;
         public ActorState      Top;
         public GuardState      Guard;
+        // IBJJF-style position score (see BJJScore.cs).
+        public BJJScore        Score;
+        // Sweep lifecycle; Completed after a sweep technique reverses position.
+        public SweepState      Sweep;
+        // Accumulated ms with both bottom feet UNLOCKED — drives the guard-pass
+        // timer (resets to 0 the moment either foot re-engages).
+        public float           PassProgressMs;
         public JudgmentWindow  JudgmentWindow;
         public CounterWindow   CounterWindow;
         public PassAttemptState PassAttempt;
@@ -135,7 +147,7 @@ namespace BJJSimulator
         // CutAttempt
         CutStarted, CutSucceeded, CutFailed,
         // GameState
-        GuardOpened, SessionEnded,
+        GuardOpened, GuardPassed, SweepCompleted, SessionEnded,
     }
 
     public struct SimEvent
@@ -168,6 +180,9 @@ namespace BJJSimulator
 
         // SessionEnded
         public SessionEndReason SessionEndReason;
+
+        // GuardPassed / SweepCompleted — the new running total.
+        public BJJScore Score;
     }
 
     // -------------------------------------------------------------------------
@@ -176,6 +191,14 @@ namespace BJJSimulator
 
     public static class GameStateOps
     {
+        // A guard pass scores once the passer has held both of the guard
+        // player's feet unlocked (guard fully open) for this long.
+        public const float PassHoldMs = 3000f;
+
+        // Sweep techniques whose confirmation reverses the position.
+        static bool IsSweepTechnique(Technique t) =>
+            t == Technique.ScissorSweep || t == Technique.FlowerSweep;
+
         public static ActorState InitialActorState(long nowMs = 0) =>
             new ActorState
             {
@@ -195,6 +218,9 @@ namespace BJJSimulator
                 Bottom                    = InitialActorState(nowMs),
                 Top                       = InitialActorState(nowMs),
                 Guard                     = GuardState.Closed,
+                Score                     = BJJScoreOps.Initial,
+                Sweep                     = SweepState.None,
+                PassProgressMs            = 0f,
                 JudgmentWindow            = JudgmentWindow.Initial,
                 CounterWindow             = CounterWindow.Initial,
                 PassAttempt               = PassAttemptState.Idle,
@@ -365,12 +391,29 @@ namespace BJJSimulator
             // 6. GuardFSM.
             // ----------------------------------------------------------------
             var nextGuard = prev.Guard;
+            var nextScore = prev.Score;
             if (prev.Guard == GuardState.Closed &&
                 nextBottomFsm.LeftFoot.State  == FootState.Unlocked &&
                 nextBottomFsm.RightFoot.State == FootState.Unlocked)
             {
                 nextGuard = GuardState.Open;
                 events.Add(new SimEvent { Kind = SimEventKind.GuardOpened });
+            }
+
+            // 6b. Guard pass — once the passer has held both feet unlocked
+            // (guard fully open) for PassHoldMs, the pass completes into
+            // SideControl and scores 3. The timer resets if a foot re-engages.
+            bool bothFeetUnlocked =
+                nextBottomFsm.LeftFoot.State  == FootState.Unlocked &&
+                nextBottomFsm.RightFoot.State == FootState.Unlocked;
+            float nextPassProgressMs = bothFeetUnlocked ? prev.PassProgressMs + opts.GameDtMs : 0f;
+            if (bothFeetUnlocked &&
+                nextGuard != GuardState.SideControl &&
+                nextPassProgressMs >= PassHoldMs)
+            {
+                nextGuard = GuardState.SideControl;
+                nextScore = BJJScoreOps.ApplyPass(nextScore);
+                events.Add(new SimEvent { Kind = SimEventKind.GuardPassed, Score = nextScore });
             }
 
             var nextBottom = new ActorState
@@ -499,6 +542,13 @@ namespace BJJSimulator
             foreach (var e in judgeEvents)
                 if (e.Kind == JudgmentEventKind.TechniqueConfirmed) { confirmedThisTick = true; break; }
 
+            // A confirmed sweep technique reverses the position (bottom comes up
+            // on top, +2). Tracked here so the swap is applied to the final pair.
+            bool sweepConfirmedThisTick = false;
+            foreach (var e in judgeEvents)
+                if (e.Kind == JudgmentEventKind.TechniqueConfirmed && IsSweepTechnique(e.ConfirmedTechnique))
+                    { sweepConfirmedThisTick = true; break; }
+
             var bottomAfterConfirm = nextBottom;
             if (confirmedThisTick)
                 bottomAfterConfirm.Stamina = StaminaOps.ApplyConfirmCost(nextBottom.Stamina);
@@ -614,11 +664,28 @@ namespace BJJSimulator
                 }
             }
 
+            // Sweep resolution: a confirmed sweep reverses the position (bottom
+            // up on top) and scores 2. Apply the swap to the final actor pair.
+            var finalBottom = bottomAfterConfirm;
+            var finalTop    = topAfterCounter;
+            var nextSweep   = prev.Sweep;
+            if (sweepConfirmedThisTick && prev.Sweep != SweepState.Completed)
+            {
+                nextScore  = BJJScoreOps.ApplySweep(nextScore);
+                nextSweep  = SweepState.Completed;
+                finalBottom = topAfterCounter;
+                finalTop    = bottomAfterConfirm;
+                events.Add(new SimEvent { Kind = SimEventKind.SweepCompleted, Score = nextScore });
+            }
+
             var nextState = new GameState
             {
-                Bottom                   = bottomAfterConfirm,
-                Top                      = topAfterCounter,
+                Bottom                   = finalBottom,
+                Top                      = finalTop,
                 Guard                    = nextGuard,
+                Score                    = nextScore,
+                Sweep                    = nextSweep,
+                PassProgressMs           = nextPassProgressMs,
                 JudgmentWindow           = finalJudgeWindow,
                 CounterWindow            = nextCounterWindow,
                 PassAttempt              = nextPassAttempt,

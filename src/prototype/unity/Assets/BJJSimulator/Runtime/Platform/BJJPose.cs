@@ -1010,8 +1010,76 @@ namespace BJJSimulator.Platform
             yaw = Mathf.Clamp(ownPose.HeadYaw * 0.3f + y * 0.7f, -0.75f, 0.75f);
         }
 
+        // ---- Side control tableau --------------------------------------------
+        // Once the pass completes (GuardState.SideControl) the bodies settle into
+        // the recognisable side-control hold: the bottom player flat on their
+        // back, pinned; the top player chest-to-chest across them, perpendicular,
+        // driving weight down. Static holds — the rig springs ease them in.
+        // Ported 1:1 from pose.ts computeSideControl{Bottom,Top}Pose.
+
+        public static BodyPose ComputeSideControlBottomPose(float nowMs)
+        {
+            float breath = BreathOscillator(nowMs, 0.32f);
+            return new BodyPose
+            {
+                PelvisX = 0f,
+                PelvisY = 0.12f, // near the mat
+                PelvisZ = 0f,
+                PelvisPitch = -Mathf.PI / 2f + 0.05f, // supine
+                PelvisYaw = 0f,
+                PelvisRoll = 0f,
+                TorsoPitch = 0.05f, // flattened under the weight
+                TorsoYaw = 0f,
+                TorsoRoll = 0f,
+                TorsoTremor = 0f,
+                HeadPitch = 0.2f,
+                HeadYaw = 0.3f, // turned away from the pressure
+                Breath = breath,
+                ArmL = new ArmPose { ShoulderPitch = 0.3f, ShoulderRoll = 0f, ShoulderYaw = -0.5f, ElbowBend = 1.0f, Tremor = 0f, Grip = 1f },
+                ArmR = new ArmPose { ShoulderPitch = 0.3f, ShoulderRoll = 0f, ShoulderYaw = 0.5f, ElbowBend = 1.0f, Tremor = 0f, Grip = 1f },
+                LegL = SolveLeg(new Vector3(0f, -1f, 0f), new Vector3(0f, -1f, 0f)),
+                LegR = SolveLeg(new Vector3(0f, -1f, 0f), new Vector3(0f, -1f, 0f)),
+            };
+        }
+
+        public static BodyPose ComputeSideControlTopPose(float nowMs)
+        {
+            float breath = BreathOscillator(nowMs, 0.30f, Mathf.PI * 0.6f);
+            return new BodyPose
+            {
+                PelvisX = 0f,
+                PelvisY = 0.30f,
+                PelvisZ = -0.3f, // alongside the bottom player
+                PelvisPitch = 0f,
+                PelvisYaw = Mathf.PI / 2f, // perpendicular across them
+                PelvisRoll = 0.1f,
+                TorsoPitch = 0.2f, // leaning in, chest pressure
+                TorsoYaw = 0f,
+                TorsoRoll = 0f,
+                TorsoTremor = 0f,
+                HeadPitch = 0.3f,
+                HeadYaw = 0f,
+                Breath = breath,
+                ArmL = new ArmPose { ShoulderPitch = 1.0f, ShoulderRoll = 0.2f, ShoulderYaw = -0.3f, ElbowBend = 1.2f, Tremor = 0f, Grip = 1f },
+                ArmR = new ArmPose { ShoulderPitch = 0.5f, ShoulderRoll = -0.1f, ShoulderYaw = 0.5f, ElbowBend = 0.8f, Tremor = 0f, Grip = 1f },
+                LegL = SolveLeg(new Vector3(0.1f, -0.9f, 0.4f), new Vector3(-0.2f, -0.98f, 0f)),
+                LegR = SolveLeg(new Vector3(-0.1f, -0.85f, -0.5f), new Vector3(0.1f, -0.95f, -0.2f)),
+            };
+        }
+
         public static ScenePoses ComputeScenePoses(BottomPoseInputs bottomIn, TopPoseInputs topIn)
         {
+            // Side control is a settled hold — bypass the grip/IK coupling and
+            // place both bodies in the canned tableau.
+            if (bottomIn.Guard == GuardState.SideControl)
+            {
+                return new ScenePoses
+                {
+                    Bottom = ComputeSideControlBottomPose(bottomIn.NowMs),
+                    Top    = ComputeSideControlTopPose(topIn.NowMs),
+                };
+            }
+
             BodyPose b0 = ComputeBottomPose(bottomIn);
             BodyPose t0 = ComputeTopPose(topIn);
 

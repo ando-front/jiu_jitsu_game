@@ -80,6 +80,12 @@ import {
   type CutTickEvent,
 } from "./cut_attempt.js";
 import type { DefenseIntent } from "../input/intent_defense.js";
+import {
+  INITIAL_SCORE,
+  applyPass,
+  applySweep,
+  type BJJScore,
+} from "./score.js";
 
 export type Vec2 = Readonly<{ x: number; y: number }>;
 
@@ -109,7 +115,23 @@ export function initialActorState(nowMs: number): ActorState {
   });
 }
 
-export type GuardState = "CLOSED" | "OPEN";
+// Position graph for the M1 scoring loop. CLOSED → OPEN is the existing
+// one-way guard-break; OPEN → SIDE_CONTROL is the completed guard pass.
+export type GuardState = "CLOSED" | "OPEN" | "SIDE_CONTROL";
+
+// Sweep lifecycle (bottom reverses top). NONE until a sweep technique
+// confirms, then COMPLETED for the rest of the exchange.
+export type SweepState = "NONE" | "IN_PROGRESS" | "COMPLETED";
+
+// A guard pass scores once the passer has held both of the guard player's
+// feet unlocked (guard fully open) for this long.
+export const PASS_HOLD_MS = 3000;
+
+// Sweep techniques whose confirmation reverses the position (bottom → top).
+const SWEEP_TECHNIQUES: ReadonlySet<Technique> = new Set<Technique>([
+  "SCISSOR_SWEEP",
+  "FLOWER_SWEEP",
+]);
 
 export type TimeContext = Readonly<{
   scale: number;
@@ -135,6 +157,13 @@ export type GameState = Readonly<{
   bottom: ActorState;
   top: ActorState;
   guard: GuardState;
+  // IBJJF-style position score (see score.ts).
+  score: BJJScore;
+  // Sweep lifecycle; COMPLETED after a sweep technique reverses the position.
+  sweep: SweepState;
+  // Accumulated ms with both bottom feet UNLOCKED — drives the guard-pass
+  // timer (resets to 0 the moment either foot re-engages).
+  passProgressMs: number;
   judgmentWindow: JudgmentWindow;
   counterWindow: CounterWindow;
   passAttempt: PassAttemptState;
@@ -157,6 +186,9 @@ export function initialGameState(nowMs: number = 0): GameState {
     bottom: initialActorState(nowMs),
     top: initialActorState(nowMs),
     guard: "CLOSED" as const,
+    score: INITIAL_SCORE,
+    sweep: "NONE" as const,
+    passProgressMs: 0,
     judgmentWindow: INITIAL_JUDGMENT_WINDOW,
     counterWindow: INITIAL_COUNTER_WINDOW,
     passAttempt: INITIAL_PASS_ATTEMPT,
@@ -180,6 +212,10 @@ export type SimEvent =
   | PassTickEvent
   | CutTickEvent
   | { kind: "GUARD_OPENED" }
+  // Guard pass completed (top → SIDE_CONTROL, +3). `score` is the new total.
+  | { kind: "GUARD_PASSED"; score: BJJScore }
+  // Sweep completed (bottom reverses top, +2). `score` is the new total.
+  | { kind: "SWEEP_COMPLETED"; score: BJJScore }
   | { kind: "SESSION_ENDED"; reason: "PASS_SUCCESS" | "TECHNIQUE_FINISHED" | "GUARD_OPENED" };
 
 export type StepOptions = Readonly<{
@@ -320,6 +356,7 @@ export function stepSimulation(
 
   // 6. GuardFSM — one-way CLOSED → OPEN when both feet are UNLOCKED.
   let nextGuard = prev.guard;
+  let nextScore = prev.score;
   if (
     prev.guard === "CLOSED" &&
     nextBottomFsm.leftFoot.state === "UNLOCKED" &&
@@ -327,6 +364,23 @@ export function stepSimulation(
   ) {
     nextGuard = "OPEN";
     events.push({ kind: "GUARD_OPENED" });
+  }
+
+  // 6b. Guard pass — once the passer has held both feet unlocked (guard fully
+  // open) for PASS_HOLD_MS, the pass completes into SIDE_CONTROL and scores 3.
+  // The timer resets whenever either foot re-engages.
+  const bothFeetUnlocked =
+    nextBottomFsm.leftFoot.state === "UNLOCKED" &&
+    nextBottomFsm.rightFoot.state === "UNLOCKED";
+  let nextPassProgressMs = bothFeetUnlocked ? prev.passProgressMs + opts.gameDtMs : 0;
+  if (
+    bothFeetUnlocked &&
+    nextGuard !== "SIDE_CONTROL" &&
+    nextPassProgressMs >= PASS_HOLD_MS
+  ) {
+    nextGuard = "SIDE_CONTROL";
+    nextScore = applyPass(nextScore);
+    events.push({ kind: "GUARD_PASSED", score: nextScore });
   }
 
   const nextBottom: ActorState = Object.freeze({
@@ -419,6 +473,16 @@ export function stepSimulation(
     ? Object.freeze({ ...nextBottom, stamina: applyConfirmCost(nextBottom.stamina) })
     : nextBottom;
 
+  // A confirmed sweep technique reverses the position: the guard player
+  // (bottom) comes up on top and scores 2. Tracked here so the swap can be
+  // applied to the final actor pair below.
+  const sweepConfirmedThisTick = winResult.events.some(
+    (e) =>
+      e.kind === "TECHNIQUE_CONFIRMED" &&
+      "technique" in e &&
+      SWEEP_TECHNIQUES.has(e.technique),
+  );
+
   // Rebuild top with possibly-cleared arm_extracted after counter + new
   // stamina. Counter confirmation also costs defender stamina, symmetric
   // with attacker's technique confirm.
@@ -501,10 +565,27 @@ export function stepSimulation(
     }
   }
 
+  // Sweep resolution: a confirmed sweep technique reverses the position
+  // (bottom comes up on top) and scores 2. Apply the swap to the final actor
+  // pair so downstream consumers see the reversal. Only fires once.
+  let finalBottom = bottomAfterConfirm;
+  let finalTop = topAfterCounter;
+  let nextSweep = prev.sweep;
+  if (sweepConfirmedThisTick && prev.sweep !== "COMPLETED") {
+    nextScore = applySweep(nextScore);
+    nextSweep = "COMPLETED";
+    finalBottom = topAfterCounter;
+    finalTop = bottomAfterConfirm;
+    events.push({ kind: "SWEEP_COMPLETED", score: nextScore });
+  }
+
   const nextState: GameState = Object.freeze({
-    bottom: bottomAfterConfirm,
-    top: topAfterCounter,
+    bottom: finalBottom,
+    top: finalTop,
     guard: nextGuard,
+    score: nextScore,
+    sweep: nextSweep,
+    passProgressMs: nextPassProgressMs,
     judgmentWindow: finalJudgmentWindow,
     counterWindow: counterResult.next,
     passAttempt: passResult.next,

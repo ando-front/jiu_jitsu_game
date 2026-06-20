@@ -126,7 +126,7 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
   // Bottom rig is yaw-flipped π so that, with the pelvis pitched −π/2 into
   // the supine pose, the head lands toward the camera and the chest faces
   // up; mirrorXZ compensates its world-axis pelvis offsets for the flip.
-  const bottom = buildBlockman(new THREE.Color(0x5a8cff), true);
+  const bottom = buildBlockman("bottom", true);
   bottom.root.position.set(0, 0, 0);
   bottom.root.rotation.y = Math.PI;
   scene.add(bottom.root);
@@ -134,7 +134,7 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
   // Top rig keeps yaw 0 — its local +z (chest front) faces the supine
   // player — and kneels close enough that the locked guard legs wrap its
   // waist with the ankles crossing behind its back.
-  const top = buildBlockman(new THREE.Color(0xc9b48a), false);
+  const top = buildBlockman("top", false);
   top.root.position.set(...TOP_PLACEMENT.origin);
   scene.add(top.root);
 
@@ -314,32 +314,63 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
 // Limb meshes hang along local −y from their joint group, so joint group
 // rotations articulate them like bones.
 
+// A limb segment capsule, centred on the bone it represents. `length` is the
+// capsule's cylinder span (axis-aligned, excluding the hemispherical caps);
+// `boneLength` is the joint→joint distance used to centre the mesh at the
+// bone midpoint, so the rounded caps overlap each joint naturally.
 function limbCapsule(
   radius: number,
   length: number,
+  boneLength: number,
   material: THREE.Material,
 ): THREE.Mesh {
-  const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(radius, length, 4, 10), material);
-  mesh.position.y = -(length / 2 + radius);
+  const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(radius, length, 6, 12), material);
+  mesh.position.y = -boneLength / 2;
   return mesh;
 }
+
+// Gi colour palette (shared with Stage 2 BJJPoseRig.GiMaterial). A judogi is
+// a single colour, but to read the two athletes apart at blockman fidelity we
+// split top-half / bottom-half: one player wears blue over white, the other
+// white over blue. The belt is brown-belt gold; the head is bare skin.
+const GI_BLUE = 0x1133cc;
+const GI_WHITE = 0xeeeeee;
+const GI_SKIN = 0xf0c0a0;
+const GI_BELT = 0x8b6914;
 
 // Exported for headless pose previews (tools/pose_preview.ts) — the rig and
 // its spring smoothing run fine without a WebGL context. `mirrorXZ` negates
 // the world-axis pelvis offsets for rigs whose root is yaw-flipped π.
-export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): BlockmanRig {
+// `role` picks the gi split: "top" = blue jacket / white pants, "bottom" =
+// white jacket / blue pants.
+export function buildBlockman(role: "top" | "bottom", mirrorXZ: boolean): BlockmanRig {
+  // Jacket (torso + arms) vs pants (hips + legs) colours per role.
+  const torsoColor = new THREE.Color(role === "top" ? GI_BLUE : GI_WHITE);
+  const legColor = new THREE.Color(role === "top" ? GI_WHITE : GI_BLUE);
+  // setBreakBucket retints the torso material, so break tinting reads on the
+  // jacket; the leg/belt/head materials are left to their gi colours.
+  const baseColor = torsoColor;
+
   const root = new THREE.Group();
   const shakeGroup = new THREE.Group();
   root.add(shakeGroup);
   const pelvis = new THREE.Group();
   shakeGroup.add(pelvis);
 
+  // Torso/jacket material (retinted by setBreakBucket).
   const material = new THREE.MeshStandardMaterial({
-    color: baseColor.clone(),
+    color: torsoColor.clone(),
     roughness: 0.6,
   });
 
-  const pelvisMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.13, 0.10, 4, 10), material);
+  // The pelvis capsule reads as the belt — brown-belt gold, on its own
+  // material so the break-tint never touches it.
+  const beltMat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(GI_BELT),
+    roughness: 0.6,
+  });
+  // Belt: a flattened horizontal capsule wrapping the pelvis joint (gold).
+  const pelvisMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.12, 0.12, 6, 12), beltMat);
   pelvisMesh.rotation.z = Math.PI / 2;
   pelvis.add(pelvisMesh);
 
@@ -347,28 +378,43 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
   torsoGroup.position.set(0, RIG_DIMS.pelvisToTorso, 0);
   pelvis.add(torsoGroup);
 
-  const torsoMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.17, 0.30, 4, 12), material);
-  torsoMesh.position.y = 0.26;
+  // Skin material (head + neck — bare flesh above the gi collar).
+  const headMat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(GI_SKIN),
+    roughness: 0.55,
+  });
+
+  // Two-segment torso: a narrower abdomen (lower) tapering up into a broad
+  // chest (upper) for shoulder breadth. Both wear the jacket material so the
+  // break-tint reads across the whole torso. The chest is the `body` ref and
+  // the breathing-scale target.
+  const lowerTorsoMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.12, 0.16, 6, 12), material);
+  lowerTorsoMesh.position.y = 0.06;
+  torsoGroup.add(lowerTorsoMesh);
+
+  const torsoMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.14, 0.28, 6, 14), material);
+  torsoMesh.position.y = 0.30;
   torsoGroup.add(torsoMesh);
+
+  // Neck: a short cylinder bridging chest top and head (skin).
+  const neckMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.10, 12), headMat);
+  neckMesh.position.y = 0.50;
+  torsoGroup.add(neckMesh);
 
   const headGroup = new THREE.Group();
   headGroup.position.set(0, RIG_DIMS.headY, 0);
   torsoGroup.add(headGroup);
-  const headMat = new THREE.MeshStandardMaterial({
-    color: baseColor.clone().lerp(new THREE.Color(0xffffff), 0.25),
-    roughness: 0.55,
-  });
-  const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.125, 16, 12), headMat);
+  const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.11, 16, 12), headMat);
   headMesh.position.y = RIG_DIMS.headCenterY;
   headGroup.add(headMesh);
 
   // Limbs need their own materials so we can tint them per FSM state
   // without affecting the torso/head. Upper + lower segments share one
-  // material per limb.
-  const armLMat = new THREE.MeshStandardMaterial({ color: baseColor.clone(), roughness: 0.6 });
-  const armRMat = new THREE.MeshStandardMaterial({ color: baseColor.clone(), roughness: 0.6 });
-  const legLMat = new THREE.MeshStandardMaterial({ color: baseColor.clone(), roughness: 0.6 });
-  const legRMat = new THREE.MeshStandardMaterial({ color: baseColor.clone(), roughness: 0.6 });
+  // material per limb. Arms wear the jacket colour, legs the pants colour.
+  const armLMat = new THREE.MeshStandardMaterial({ color: torsoColor.clone(), roughness: 0.6 });
+  const armRMat = new THREE.MeshStandardMaterial({ color: torsoColor.clone(), roughness: 0.6 });
+  const legLMat = new THREE.MeshStandardMaterial({ color: legColor.clone(), roughness: 0.6 });
+  const legRMat = new THREE.MeshStandardMaterial({ color: legColor.clone(), roughness: 0.6 });
 
   type ArmJoints = { shoulder: THREE.Group; elbow: THREE.Group; hand: THREE.Mesh };
   function buildArm(sideX: number, mat: THREE.Material): ArmJoints {
@@ -378,13 +424,13 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
     // plane, pitch raises the arm within it).
     shoulder.rotation.order = "YXZ";
     torsoGroup.add(shoulder);
-    shoulder.add(limbCapsule(0.055, 0.17, mat));
+    shoulder.add(limbCapsule(0.045, 0.26, RIG_DIMS.upperArm, mat));
     const elbow = new THREE.Group();
     elbow.position.set(0, -RIG_DIMS.upperArm, 0);
     shoulder.add(elbow);
-    elbow.add(limbCapsule(0.05, 0.15, mat));
+    elbow.add(limbCapsule(0.038, 0.24, RIG_DIMS.foreArm, mat));
     // The hand sphere is squashed/splayed by grip in applyArm.
-    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), mat);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), mat);
     hand.position.y = -RIG_DIMS.foreArm;
     elbow.add(hand);
     return { shoulder, elbow, hand };
@@ -398,17 +444,17 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
     // thigh within it — matches pose.ts's solveLeg decomposition.
     hip.rotation.order = "YXZ";
     pelvis.add(hip);
-    hip.add(limbCapsule(0.08, 0.22, mat));
+    hip.add(limbCapsule(0.065, 0.38, RIG_DIMS.thigh, mat));
     const knee = new THREE.Group();
     knee.position.set(0, -RIG_DIMS.thigh, 0);
     hip.add(knee);
-    knee.add(limbCapsule(0.065, 0.21, mat));
+    knee.add(limbCapsule(0.048, 0.35, RIG_DIMS.shin, mat));
     // Foot hangs off an ankle pivot so it can plantar/dorsiflex.
     const ankle = new THREE.Group();
-    ankle.position.set(0, -0.36, 0);
+    ankle.position.set(0, -RIG_DIMS.shin, 0);
     knee.add(ankle);
-    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.06, 0.18), mat);
-    foot.position.set(0, 0, 0.05);
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.05, 0.20), mat);
+    foot.position.set(0, 0, 0.06);
     ankle.add(foot);
     return { hip, knee, ankle };
   }
@@ -428,21 +474,24 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
 
   // Per-state colours. Picked so the player can recognise transitions at
   // a glance: REACH=cyan (moving), GRIP=yellow (engaged), PARRY=red,
-  // RETRACT=dim, LOCKED=green (foot hook holding), UNLOCKED=base.
-  const baseLimb = baseColor.clone();
+  // RETRACT=dim, LOCKED=green (foot hook holding). IDLE / UNLOCKED / RETRACT
+  // resolve to each limb's own gi colour (arms = jacket, legs = pants), so a
+  // settled limb shows its gi rather than a single shared base.
   const stateColors: Readonly<Record<string, THREE.Color>> = Object.freeze({
-    IDLE:      baseLimb.clone(),
     REACHING:  new THREE.Color(0x6fd0ff),
     CONTACT:   new THREE.Color(0xffffff),
     GRIPPED:   new THREE.Color(0xf2cf5c),
     PARRIED:   new THREE.Color(0xff6a4a),
-    RETRACT:   baseLimb.clone().multiplyScalar(0.55),
     LOCKED:    new THREE.Color(0x7be0a0),
-    UNLOCKED:  baseLimb.clone(),
     LOCKING:   new THREE.Color(0xc8e078),
   });
   const limbMats: Readonly<Record<string, THREE.MeshStandardMaterial>> = Object.freeze({
     armL: armLMat, armR: armRMat, legL: legLMat, legR: legRMat,
+  });
+  // Each limb's resting gi colour, for IDLE / UNLOCKED (and dimmed RETRACT).
+  const limbBase: Readonly<Record<string, THREE.Color>> = Object.freeze({
+    armL: torsoColor.clone(), armR: torsoColor.clone(),
+    legL: legColor.clone(), legR: legColor.clone(),
   });
 
   // --- Pose smoothing state ---
@@ -553,9 +602,18 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
     },
     setLimbState(limb, state) {
       const mat = limbMats[limb];
+      if (mat === undefined) return;
+      const base = limbBase[limb]!;
+      if (state === "IDLE" || state === "UNLOCKED") {
+        mat.color.copy(base);
+        return;
+      }
+      if (state === "RETRACT") {
+        mat.color.copy(base).multiplyScalar(0.55);
+        return;
+      }
       const color = stateColors[state];
-      if (mat === undefined || color === undefined) return;
-      mat.color.copy(color);
+      if (color !== undefined) mat.color.copy(color);
     },
     applyPose(pose: BodyPose, nowMs: number) {
       const dtS =
