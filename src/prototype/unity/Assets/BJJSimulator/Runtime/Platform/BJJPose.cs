@@ -244,7 +244,7 @@ namespace BJJSimulator.Platform
         // Defender base zones are GripZone-free in C# state; the binder passes
         // a GripZone-like enum only for attacker grips. Defender posts use the
         // canned rest unless an explicit base anchor applies (see IK section).
-        static readonly ReachTarget AttackRest = RT(-0.90f, 0.10f, 0f, 1.25f);
+        static readonly ReachTarget AttackRest = RT(-0.70f, 0.14f, 0.05f, 0.80f);
         static readonly ReachTarget DefenseRest = RT(-0.70f, 0.14f, 0f, 0.35f);
         static readonly ReachTarget ParriedArm = RT(-0.75f, 0.90f, 0.30f, 0.30f);
         static readonly ReachTarget ExtractedArm = RT(-1.30f, 0.05f, -0.60f, 0.50f);
@@ -420,7 +420,7 @@ namespace BJJSimulator.Platform
         }
 
         static readonly Vector3 LegDirLockedThigh = new Vector3(0.31f, -0.76f, 0.56f);
-        static readonly Vector3 LegDirLockedShin = new Vector3(-0.84f, -0.53f, -0.16f);
+        static readonly Vector3 LegDirLockedShin = new Vector3(-0.78f, -0.62f, -0.10f);
         static readonly Vector3 LegDirUnlockedThigh = new Vector3(0.52f, -0.69f, 0.49f);
         static readonly Vector3 LegDirUnlockedShin = new Vector3(-0.75f, -0.66f, 0.0f);
         static readonly Vector3 LegDirOpenThigh = new Vector3(0.62f, -0.65f, 0.35f);
@@ -542,16 +542,16 @@ namespace BJJSimulator.Platform
             var pose = new BodyPose
             {
                 PelvisX = input.HipLateral * 0.20f + sway * 0.012f,
-                PelvisY = 0.26f + (legsLocked ? 0.05f : 0f) + Mathf.Abs(input.HipPush) * 0.03f + coil * 0.04f +
+                PelvisY = 0.26f + (legsLocked ? 0.10f : 0f) + Mathf.Abs(input.HipPush) * 0.03f + coil * 0.04f +
                           (entry.HasPelvisY ? entry.PelvisY : 0f),
-                PelvisZ = input.HipPush * 0.30f + sway2 * 0.008f,
+                PelvisZ = input.HipPush * 0.42f + sway2 * 0.008f,
                 PelvisPitch = -Mathf.PI / 2f + 0.15f,
                 PelvisYaw = input.HipAngle + (entry.HasPelvisYaw ? entry.PelvisYaw : 0f) + shuffleYaw,
-                PelvisRoll = input.HipLateral * 0.25f + (entry.HasPelvisRoll ? entry.PelvisRoll : 0f) + shuffleRoll,
+                PelvisRoll = input.HipLateral * 0.45f + (entry.HasPelvisRoll ? entry.PelvisRoll : 0f) + shuffleRoll,
                 TorsoPitch = 0.20f + sitUp * 0.7f + coil * 0.10f + breath * 0.04f - fatigue * 0.15f +
                              (entry.HasTorsoPitch ? entry.TorsoPitch : 0f),
                 TorsoYaw = input.HipAngle * 0.35f + sway2 * 0.02f + reachTwist,
-                TorsoRoll = input.HipLateral * 0.18f + sway * 0.015f + (entry.HasTorsoRoll ? entry.TorsoRoll : 0f),
+                TorsoRoll = input.HipLateral * 0.28f + sway * 0.015f + (entry.HasTorsoRoll ? entry.TorsoRoll : 0f),
                 TorsoTremor = 0f,
                 HeadPitch = 0.45f + sitUp * 0.4f - fatigue * 0.35f + breath * 0.02f,
                 HeadYaw = input.HipAngle * 0.3f + headScan,
@@ -641,7 +641,7 @@ namespace BJJSimulator.Platform
                 else armR = LerpArm(armR, PostArm, postT);
             }
 
-            LegPose kneel = new LegPose { HipPitch = -0.55f + input.WeightForward * 0.15f, HipYaw = 0f, HipRoll = 0.30f, KneeBend = 2.00f, Ankle = 0f };
+            LegPose kneel = new LegPose { HipPitch = -0.55f + input.WeightForward * 0.15f, HipYaw = 0f, HipRoll = 0.30f, KneeBend = 1.65f, Ankle = 0f };
             float passT = !input.HasPass ? 0f : Clamp01(input.PassElapsedMs / 400f);
             float passSurge = !input.HasPass ? 0f : Mathf.Sin((input.PassElapsedMs / 1000f) * TWO_PI * 1.5f) * 0.04f;
             bool driveRight = input.WeightLateral >= 0f;
