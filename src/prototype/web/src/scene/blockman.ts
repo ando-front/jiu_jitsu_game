@@ -126,7 +126,7 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
   // Bottom rig is yaw-flipped π so that, with the pelvis pitched −π/2 into
   // the supine pose, the head lands toward the camera and the chest faces
   // up; mirrorXZ compensates its world-axis pelvis offsets for the flip.
-  const bottom = buildBlockman(new THREE.Color(0x5a8cff), true);
+  const bottom = buildBlockman("bottom", true);
   bottom.root.position.set(0, 0, 0);
   bottom.root.rotation.y = Math.PI;
   scene.add(bottom.root);
@@ -134,7 +134,7 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
   // Top rig keeps yaw 0 — its local +z (chest front) faces the supine
   // player — and kneels close enough that the locked guard legs wrap its
   // waist with the ankles crossing behind its back.
-  const top = buildBlockman(new THREE.Color(0xc9b48a), false);
+  const top = buildBlockman("top", false);
   top.root.position.set(...TOP_PLACEMENT.origin);
   scene.add(top.root);
 
@@ -324,22 +324,47 @@ function limbCapsule(
   return mesh;
 }
 
+// Gi colour palette (shared with Stage 2 BJJPoseRig.GiMaterial). A judogi is
+// a single colour, but to read the two athletes apart at blockman fidelity we
+// split top-half / bottom-half: one player wears blue over white, the other
+// white over blue. The belt is brown-belt gold; the head is bare skin.
+const GI_BLUE = 0x1133cc;
+const GI_WHITE = 0xeeeeee;
+const GI_SKIN = 0xf0c0a0;
+const GI_BELT = 0x8b6914;
+
 // Exported for headless pose previews (tools/pose_preview.ts) — the rig and
 // its spring smoothing run fine without a WebGL context. `mirrorXZ` negates
 // the world-axis pelvis offsets for rigs whose root is yaw-flipped π.
-export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): BlockmanRig {
+// `role` picks the gi split: "top" = blue jacket / white pants, "bottom" =
+// white jacket / blue pants.
+export function buildBlockman(role: "top" | "bottom", mirrorXZ: boolean): BlockmanRig {
+  // Jacket (torso + arms) vs pants (hips + legs) colours per role.
+  const torsoColor = new THREE.Color(role === "top" ? GI_BLUE : GI_WHITE);
+  const legColor = new THREE.Color(role === "top" ? GI_WHITE : GI_BLUE);
+  // setBreakBucket retints the torso material, so break tinting reads on the
+  // jacket; the leg/belt/head materials are left to their gi colours.
+  const baseColor = torsoColor;
+
   const root = new THREE.Group();
   const shakeGroup = new THREE.Group();
   root.add(shakeGroup);
   const pelvis = new THREE.Group();
   shakeGroup.add(pelvis);
 
+  // Torso/jacket material (retinted by setBreakBucket).
   const material = new THREE.MeshStandardMaterial({
-    color: baseColor.clone(),
+    color: torsoColor.clone(),
     roughness: 0.6,
   });
 
-  const pelvisMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.13, 0.10, 4, 10), material);
+  // The pelvis capsule reads as the belt — brown-belt gold, on its own
+  // material so the break-tint never touches it.
+  const beltMat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(GI_BELT),
+    roughness: 0.6,
+  });
+  const pelvisMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.13, 0.10, 4, 10), beltMat);
   pelvisMesh.rotation.z = Math.PI / 2;
   pelvis.add(pelvisMesh);
 
@@ -355,7 +380,7 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
   headGroup.position.set(0, RIG_DIMS.headY, 0);
   torsoGroup.add(headGroup);
   const headMat = new THREE.MeshStandardMaterial({
-    color: baseColor.clone().lerp(new THREE.Color(0xffffff), 0.25),
+    color: new THREE.Color(GI_SKIN),
     roughness: 0.55,
   });
   const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.125, 16, 12), headMat);
@@ -364,11 +389,11 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
 
   // Limbs need their own materials so we can tint them per FSM state
   // without affecting the torso/head. Upper + lower segments share one
-  // material per limb.
-  const armLMat = new THREE.MeshStandardMaterial({ color: baseColor.clone(), roughness: 0.6 });
-  const armRMat = new THREE.MeshStandardMaterial({ color: baseColor.clone(), roughness: 0.6 });
-  const legLMat = new THREE.MeshStandardMaterial({ color: baseColor.clone(), roughness: 0.6 });
-  const legRMat = new THREE.MeshStandardMaterial({ color: baseColor.clone(), roughness: 0.6 });
+  // material per limb. Arms wear the jacket colour, legs the pants colour.
+  const armLMat = new THREE.MeshStandardMaterial({ color: torsoColor.clone(), roughness: 0.6 });
+  const armRMat = new THREE.MeshStandardMaterial({ color: torsoColor.clone(), roughness: 0.6 });
+  const legLMat = new THREE.MeshStandardMaterial({ color: legColor.clone(), roughness: 0.6 });
+  const legRMat = new THREE.MeshStandardMaterial({ color: legColor.clone(), roughness: 0.6 });
 
   type ArmJoints = { shoulder: THREE.Group; elbow: THREE.Group; hand: THREE.Mesh };
   function buildArm(sideX: number, mat: THREE.Material): ArmJoints {
@@ -428,21 +453,24 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
 
   // Per-state colours. Picked so the player can recognise transitions at
   // a glance: REACH=cyan (moving), GRIP=yellow (engaged), PARRY=red,
-  // RETRACT=dim, LOCKED=green (foot hook holding), UNLOCKED=base.
-  const baseLimb = baseColor.clone();
+  // RETRACT=dim, LOCKED=green (foot hook holding). IDLE / UNLOCKED / RETRACT
+  // resolve to each limb's own gi colour (arms = jacket, legs = pants), so a
+  // settled limb shows its gi rather than a single shared base.
   const stateColors: Readonly<Record<string, THREE.Color>> = Object.freeze({
-    IDLE:      baseLimb.clone(),
     REACHING:  new THREE.Color(0x6fd0ff),
     CONTACT:   new THREE.Color(0xffffff),
     GRIPPED:   new THREE.Color(0xf2cf5c),
     PARRIED:   new THREE.Color(0xff6a4a),
-    RETRACT:   baseLimb.clone().multiplyScalar(0.55),
     LOCKED:    new THREE.Color(0x7be0a0),
-    UNLOCKED:  baseLimb.clone(),
     LOCKING:   new THREE.Color(0xc8e078),
   });
   const limbMats: Readonly<Record<string, THREE.MeshStandardMaterial>> = Object.freeze({
     armL: armLMat, armR: armRMat, legL: legLMat, legR: legRMat,
+  });
+  // Each limb's resting gi colour, for IDLE / UNLOCKED (and dimmed RETRACT).
+  const limbBase: Readonly<Record<string, THREE.Color>> = Object.freeze({
+    armL: torsoColor.clone(), armR: torsoColor.clone(),
+    legL: legColor.clone(), legR: legColor.clone(),
   });
 
   // --- Pose smoothing state ---
@@ -553,9 +581,18 @@ export function buildBlockman(baseColor: THREE.Color, mirrorXZ: boolean): Blockm
     },
     setLimbState(limb, state) {
       const mat = limbMats[limb];
+      if (mat === undefined) return;
+      const base = limbBase[limb]!;
+      if (state === "IDLE" || state === "UNLOCKED") {
+        mat.color.copy(base);
+        return;
+      }
+      if (state === "RETRACT") {
+        mat.color.copy(base).multiplyScalar(0.55);
+        return;
+      }
       const color = stateColors[state];
-      if (mat === undefined || color === undefined) return;
-      mat.color.copy(color);
+      if (color !== undefined) mat.color.copy(color);
     },
     applyPose(pose: BodyPose, nowMs: number) {
       const dtS =

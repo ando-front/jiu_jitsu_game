@@ -65,9 +65,44 @@ namespace BJJSimulator.Platform
     public class BJJPoseRig : MonoBehaviour
     {
         [Header("Colours")]
-        [SerializeField] private Color bottomColor = new Color(0.35f, 0.55f, 1.00f);
-        [SerializeField] private Color topColor    = new Color(0.79f, 0.71f, 0.54f);
         [SerializeField] private Color noseColor   = new Color(1.00f, 0.85f, 0.30f);
+
+        // Gi palette (shared with Stage 1 blockman.ts). A judogi is one colour,
+        // but to read the two athletes apart at BlockMan fidelity we split the
+        // jacket (torso + arms) from the pants (hips + legs): the "top" player
+        // (passer) wears blue over white, the "bottom" player (guard) white over
+        // blue. Belt = brown-belt gold; head = bare skin.
+        private static readonly Color GiBlue  = new Color(0.1f, 0.2f, 0.8f);
+        private static readonly Color GiWhite = Color.white;
+        private static readonly Color GiSkin  = new Color(0.9f, 0.75f, 0.6f);
+        private static readonly Color GiBelt  = new Color(0.6f, 0.4f, 0.0f);
+
+        // Which gi region a primitive belongs to (drives its colour).
+        private enum BonePart { Torso, Arm, Leg, Belt, Head }
+
+        // Cached gi materials, keyed so the two skeletons reuse one material per
+        // (isTop, part) rather than allocating a fresh one per primitive.
+        private readonly System.Collections.Generic.Dictionary<(bool, BonePart), Material> _giMats
+            = new System.Collections.Generic.Dictionary<(bool, BonePart), Material>();
+
+        // Resolve the gi colour for a body region and return a cached material.
+        private Material GiMaterial(bool isTop, BonePart part)
+        {
+            var key = (isTop, part);
+            if (_giMats.TryGetValue(key, out var cached)) return cached;
+            Color c = part switch
+            {
+                BonePart.Torso => isTop ? GiBlue  : GiWhite,
+                BonePart.Arm   => isTop ? GiBlue  : GiWhite,
+                BonePart.Leg   => isTop ? GiWhite : GiBlue,
+                BonePart.Belt  => GiBelt,
+                BonePart.Head  => GiSkin,
+                _              => GiWhite,
+            };
+            var mat = MakeMaterial(c);
+            _giMats[key] = mat;
+            return mat;
+        }
 
         [Header("Rig dimensions")]
         [SerializeField, Range(0.01f, 0.1f)] private float jointRadius = 0.045f;
@@ -806,60 +841,67 @@ namespace BJJSimulator.Platform
             var chars = new GameObject("BJJPoseRig_Characters").transform;
             chars.SetParent(transform, false);
 
-            _bottom = BuildSkeleton(chars, "Bottom", bottomColor);
-            _top    = BuildSkeleton(chars, "Top",    topColor);
+            // Bottom = guard player (white jacket / blue pants), Top = passer
+            // (blue jacket / white pants). isTop selects the gi split.
+            _bottom = BuildSkeleton(chars, "Bottom", isTop: false);
+            _top    = BuildSkeleton(chars, "Top",    isTop: true);
         }
 
-        private Skeleton BuildSkeleton(Transform parent, string name, Color color)
+        private Skeleton BuildSkeleton(Transform parent, string name, bool isTop)
         {
             var rootGo = new GameObject(name);
             rootGo.transform.SetParent(parent, false);
             var root = rootGo.transform;
 
-            var mat = MakeMaterial(color);
-            var noseMat = MakeMaterial(noseColor);
+            // Per-region gi materials (jacket / pants / belt / skin).
+            var torsoMat = GiMaterial(isTop, BonePart.Torso);
+            var armMat   = GiMaterial(isTop, BonePart.Arm);
+            var legMat   = GiMaterial(isTop, BonePart.Leg);
+            var beltMat  = GiMaterial(isTop, BonePart.Belt);
+            var headMat  = GiMaterial(isTop, BonePart.Head);
+            var noseMat  = MakeMaterial(noseColor);
             var sk = new Skeleton();
 
-            sk.Pelvis    = Joint(root, "Pelvis", mat);
-            sk.LowerSpine = Joint(root, "LowerSpine", mat, 0.85f);
-            sk.MidSpine   = Joint(root, "MidSpine", mat, 0.9f);
-            sk.Chest     = Joint(root, "Chest", mat);
-            sk.Head      = Joint(root, "Head", mat, 1.4f);
+            sk.Pelvis    = Joint(root, "Pelvis", beltMat); // belt
+            sk.LowerSpine = Joint(root, "LowerSpine", torsoMat, 0.85f);
+            sk.MidSpine   = Joint(root, "MidSpine", torsoMat, 0.9f);
+            sk.Chest     = Joint(root, "Chest", torsoMat);
+            sk.Head      = Joint(root, "Head", headMat, 1.4f); // skin
             sk.Nose      = Joint(root, "Nose", noseMat, 0.5f); // gaze indicator
-            sk.ShoulderL = Joint(root, "ShoulderL", mat);
-            sk.ShoulderR = Joint(root, "ShoulderR", mat);
-            sk.ElbowL    = Joint(root, "ElbowL", mat);
-            sk.ElbowR    = Joint(root, "ElbowR", mat);
-            sk.HandL     = Joint(root, "HandL", mat);
-            sk.HandR     = Joint(root, "HandR", mat);
-            sk.HipL      = Joint(root, "HipL", mat);
-            sk.HipR      = Joint(root, "HipR", mat);
-            sk.KneeL     = Joint(root, "KneeL", mat);
-            sk.KneeR     = Joint(root, "KneeR", mat);
-            sk.AnkleL    = Joint(root, "AnkleL", mat);
-            sk.AnkleR    = Joint(root, "AnkleR", mat);
+            sk.ShoulderL = Joint(root, "ShoulderL", armMat);
+            sk.ShoulderR = Joint(root, "ShoulderR", armMat);
+            sk.ElbowL    = Joint(root, "ElbowL", armMat);
+            sk.ElbowR    = Joint(root, "ElbowR", armMat);
+            sk.HandL     = Joint(root, "HandL", armMat);
+            sk.HandR     = Joint(root, "HandR", armMat);
+            sk.HipL      = Joint(root, "HipL", legMat);
+            sk.HipR      = Joint(root, "HipR", legMat);
+            sk.KneeL     = Joint(root, "KneeL", legMat);
+            sk.KneeR     = Joint(root, "KneeR", legMat);
+            sk.AnkleL    = Joint(root, "AnkleL", legMat);
+            sk.AnkleR    = Joint(root, "AnkleR", legMat);
 
-            sk.SpineLoBone  = Bone(root, "SpineLo", mat);
-            sk.SpineMidBone = Bone(root, "SpineMid", mat);
-            sk.SpineUpBone  = Bone(root, "SpineUp", mat);
-            sk.NeckBone   = Bone(root, "Neck", mat);
-            sk.ClavLBone  = Bone(root, "ClavL", mat);
-            sk.ClavRBone  = Bone(root, "ClavR", mat);
-            sk.UpArmLBone = Bone(root, "UpArmL", mat);
-            sk.UpArmRBone = Bone(root, "UpArmR", mat);
-            sk.LoArmLBone = Bone(root, "LoArmL", mat);
-            sk.LoArmRBone = Bone(root, "LoArmR", mat);
-            sk.PelvLBone  = Bone(root, "PelvL", mat);
-            sk.PelvRBone  = Bone(root, "PelvR", mat);
-            sk.ThighLBone = Bone(root, "ThighL", mat);
-            sk.ThighRBone = Bone(root, "ThighR", mat);
-            sk.ShinLBone  = Bone(root, "ShinL", mat);
-            sk.ShinRBone  = Bone(root, "ShinR", mat);
-            sk.FootLBone  = Bone(root, "FootL", mat);
-            sk.FootRBone  = Bone(root, "FootR", mat);
+            sk.SpineLoBone  = Bone(root, "SpineLo", torsoMat);
+            sk.SpineMidBone = Bone(root, "SpineMid", torsoMat);
+            sk.SpineUpBone  = Bone(root, "SpineUp", torsoMat);
+            sk.NeckBone   = Bone(root, "Neck", torsoMat);
+            sk.ClavLBone  = Bone(root, "ClavL", armMat);
+            sk.ClavRBone  = Bone(root, "ClavR", armMat);
+            sk.UpArmLBone = Bone(root, "UpArmL", armMat);
+            sk.UpArmRBone = Bone(root, "UpArmR", armMat);
+            sk.LoArmLBone = Bone(root, "LoArmL", armMat);
+            sk.LoArmRBone = Bone(root, "LoArmR", armMat);
+            sk.PelvLBone  = Bone(root, "PelvL", legMat);
+            sk.PelvRBone  = Bone(root, "PelvR", legMat);
+            sk.ThighLBone = Bone(root, "ThighL", legMat);
+            sk.ThighRBone = Bone(root, "ThighR", legMat);
+            sk.ShinLBone  = Bone(root, "ShinL", legMat);
+            sk.ShinRBone  = Bone(root, "ShinR", legMat);
+            sk.FootLBone  = Bone(root, "FootL", legMat);
+            sk.FootRBone  = Bone(root, "FootR", legMat);
 
-            sk.FingersL = BuildFingers(root, "FingerL", mat);
-            sk.FingersR = BuildFingers(root, "FingerR", mat);
+            sk.FingersL = BuildFingers(root, "FingerL", armMat);
+            sk.FingersR = BuildFingers(root, "FingerR", armMat);
             return sk;
         }
 

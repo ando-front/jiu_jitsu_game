@@ -1025,6 +1025,7 @@ function renderHud(f: InputFrame, intent: Intent, g: GameState, stepsThisRaf: nu
   lines.push(`armExtracted L=${g.topArmExtracted.left} R=${g.topArmExtracted.right}`);
   lines.push("── Session ──");
   lines.push(`guard ${g.guard}`);
+  lines.push(`score  top(pass)=${g.score.top}  bottom(sweep)=${g.score.bottom}  sweep=${g.sweep}`);
   lines.push(`initiative ${g.control.initiative}${g.control.lockedByWindow ? " (locked)" : ""}`);
   lines.push(`judgmentWindow ${g.judgmentWindow.state}  timeScale ${g.time.scale.toFixed(2)}`);
   lines.push(`candidates ${g.judgmentWindow.candidates.join(" ") || "·"}`);

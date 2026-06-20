@@ -226,10 +226,10 @@ fs.mkdirSync(outDir, { recursive: true });
 
 for (const spec of SCENES) {
   // Must match createScene's rig setup.
-  const bottomRig = buildBlockman(new THREE.Color(0x5a8cff), true);
+  const bottomRig = buildBlockman("bottom", true);
   bottomRig.root.position.set(0, 0, 0);
   bottomRig.root.rotation.y = Math.PI;
-  const topRig = buildBlockman(new THREE.Color(0xc9b48a), false);
+  const topRig = buildBlockman("top", false);
   topRig.root.position.set(0, 0, -0.5);
 
   // Settle the springs: step the pose for 2 simulated seconds.

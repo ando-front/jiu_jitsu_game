@@ -79,7 +79,7 @@ export type LimbSnapshot = Readonly<{ state: string; target: string | null; sinc
 export type BottomPoseInput = Readonly<{
   nowMs: number;
   stamina: number; // 0..1
-  guard: "CLOSED" | "OPEN";
+  guard: "CLOSED" | "OPEN" | "SIDE_CONTROL";
   leftHand: LimbSnapshot;
   rightHand: LimbSnapshot;
   leftFootState: string;
@@ -419,7 +419,11 @@ const LEG_DIR_OPEN = Object.freeze({
   shin: [-0.45, -0.85, -0.2] as V3,
 });
 
-function bottomLegPose(footState: string, guard: "CLOSED" | "OPEN", nowMs: number): LegPose {
+function bottomLegPose(
+  footState: string,
+  guard: "CLOSED" | "OPEN" | "SIDE_CONTROL",
+  nowMs: number,
+): LegPose {
   const unlocked = guard === "OPEN" ? LEG_DIR_OPEN : LEG_DIR_UNLOCKED;
   switch (footState) {
     case "LOCKED":
@@ -1413,10 +1417,76 @@ function lookAt(ownPose: BodyPose, ownFrames: BodyFrames, targetWorld: V3): { pi
 
 export type ScenePoses = Readonly<{ bottom: BodyPose; top: BodyPose }>;
 
+// ---- Side control tableau --------------------------------------------------
+// Once the pass completes (GuardState SIDE_CONTROL) the bodies settle into the
+// recognisable side-control hold: the bottom player flat on their back, pinned;
+// the top player chest-to-chest across them, perpendicular, driving weight down.
+// These are static holds — the rig's springs ease the transition in.
+
+function computeSideControlBottomPose(nowMs: number): BodyPose {
+  // Slow, heavy breathing under the pin.
+  const breath = breathOscillator(nowMs, 0.32);
+  return {
+    pelvisX: 0,
+    pelvisY: 0.12, // near the mat
+    pelvisZ: 0.0,
+    pelvisPitch: -Math.PI / 2 + 0.05, // supine
+    pelvisYaw: 0,
+    pelvisRoll: 0,
+    torsoPitch: 0.05, // barely curled — flattened out under the weight
+    torsoYaw: 0,
+    torsoRoll: 0,
+    torsoTremor: 0,
+    headPitch: 0.2,
+    headYaw: 0.3, // turned away from the pressure
+    breath,
+    // Arms pinned / framing against the chest.
+    armL: { shoulderPitch: 0.3, shoulderRoll: 0, shoulderYaw: -0.5, elbowBend: 1.0, tremor: 0, grip: 1 },
+    armR: { shoulderPitch: 0.3, shoulderRoll: 0, shoulderYaw: 0.5, elbowBend: 1.0, tremor: 0, grip: 1 },
+    // Legs straight out along the mat.
+    legL: solveLeg([0, -1, 0], [0, -1, 0]),
+    legR: solveLeg([0, -1, 0], [0, -1, 0]),
+  };
+}
+
+function computeSideControlTopPose(nowMs: number): BodyPose {
+  const breath = breathOscillator(nowMs, 0.30, Math.PI * 0.6);
+  return {
+    pelvisX: 0,
+    pelvisY: 0.30,
+    pelvisZ: -0.3, // alongside the bottom player
+    pelvisPitch: 0,
+    pelvisYaw: Math.PI / 2, // perpendicular across the bottom player
+    pelvisRoll: 0.1,
+    torsoPitch: 0.2, // leaning in, chest pressure
+    torsoYaw: 0,
+    torsoRoll: 0,
+    torsoTremor: 0,
+    headPitch: 0.3,
+    headYaw: 0,
+    breath,
+    // Cross-face / underhook arms controlling the pinned player.
+    armL: { shoulderPitch: 1.0, shoulderRoll: 0.2, shoulderYaw: -0.3, elbowBend: 1.2, tremor: 0, grip: 1 },
+    armR: { shoulderPitch: 0.5, shoulderRoll: -0.1, shoulderYaw: 0.5, elbowBend: 0.8, tremor: 0, grip: 1 },
+    // Knee-on-belly-ish base: one leg in, one posted back.
+    legL: solveLeg([0.1, -0.9, 0.4], [-0.2, -0.98, 0]),
+    legR: solveLeg([-0.1, -0.85, -0.5], [0.1, -0.95, -0.2]),
+  };
+}
+
 export function computeScenePoses(
   bottomIn: BottomPoseInput,
   topIn: TopPoseInput,
 ): ScenePoses {
+  // Side control is a settled hold — bypass the grip/IK coupling and place
+  // both bodies in the canned tableau.
+  if (bottomIn.guard === "SIDE_CONTROL") {
+    return {
+      bottom: computeSideControlBottomPose(bottomIn.nowMs),
+      top: computeSideControlTopPose(topIn.nowMs),
+    };
+  }
+
   const b0 = computeBottomPose(bottomIn);
   const t0 = computeTopPose(topIn);
 

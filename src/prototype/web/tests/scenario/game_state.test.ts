@@ -155,6 +155,54 @@ describe("Guard FSM (§6)", () => {
   });
 });
 
+describe("Guard pass scoring (§ score.ts)", () => {
+  const passOpts = (gameDtMs: number) => ({ realDtMs: gameDtMs, gameDtMs, confirmedTechnique: null });
+
+  it("holding both feet UNLOCKED for 3s passes the guard → SIDE_CONTROL, +3 top", () => {
+    let g: GameState = initialGameState();
+    expect(g.score).toEqual({ top: 0, bottom: 0 });
+
+    // Tick 1: unlock both feet (guard opens, pass timer starts).
+    g = stepSimulation(
+      g,
+      frame({ timestamp: 0, button_edges: ButtonBit.L_BUMPER | ButtonBit.R_BUMPER }),
+      intent({ discrete: [{ kind: "FOOT_HOOK_TOGGLE", side: "L" }, { kind: "FOOT_HOOK_TOGGLE", side: "R" }] }),
+      passOpts(16),
+    ).nextState;
+    expect(g.guard).toBe("OPEN");
+    expect(g.passProgressMs).toBe(16);
+
+    // Tick 2: 3s elapse with both feet still unlocked → pass completes.
+    const res = stepSimulation(g, frame({ timestamp: 3016 }), intent(), passOpts(3000));
+    g = res.nextState;
+    expect(g.guard).toBe("SIDE_CONTROL");
+    expect(g.score).toEqual({ top: 3, bottom: 0 });
+    const passed = res.events.find((e) => e.kind === "GUARD_PASSED");
+    expect(passed).toBeDefined();
+  });
+
+  it("the pass timer resets if a foot re-engages before 3s", () => {
+    let g: GameState = initialGameState();
+    g = stepSimulation(
+      g,
+      frame({ timestamp: 0, button_edges: ButtonBit.L_BUMPER | ButtonBit.R_BUMPER }),
+      intent({ discrete: [{ kind: "FOOT_HOOK_TOGGLE", side: "L" }, { kind: "FOOT_HOOK_TOGGLE", side: "R" }] }),
+      passOpts(16),
+    ).nextState;
+
+    // Re-lock the left foot → timer resets, guard does not advance.
+    g = stepSimulation(
+      g,
+      frame({ timestamp: 1000, button_edges: ButtonBit.L_BUMPER }),
+      intent({ discrete: [{ kind: "FOOT_HOOK_TOGGLE", side: "L" }] }),
+      passOpts(984),
+    ).nextState;
+    expect(g.passProgressMs).toBe(0);
+    expect(g.guard).toBe("OPEN");
+    expect(g.score.top).toBe(0);
+  });
+});
+
 describe("frameIndex and nowMs propagate", () => {
   it("frameIndex increments by one per step; nowMs mirrors the input timestamp", () => {
     let g: GameState = initialGameState();
