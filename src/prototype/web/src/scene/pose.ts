@@ -153,7 +153,7 @@ const DEFENSE_ZONE_REACH: Readonly<Record<string, ReachTarget>> = Object.freeze(
 });
 
 // Idle guard frame for the supine attacker: elbows in, hands up like a boxer.
-const ATTACK_REST: ReachTarget = Object.freeze({ pitch: -0.90, roll: 0.10, yaw: 0, elbow: 1.25 });
+const ATTACK_REST: ReachTarget = Object.freeze({ pitch: -0.70, roll: 0.14, yaw: 0.05, elbow: 0.80 });
 // Defender rest: hands posted down onto the opponent's torso below.
 const DEFENSE_REST: ReachTarget = Object.freeze({ pitch: -0.70, roll: 0.14, yaw: 0, elbow: 0.35 });
 // Arm knocked aside by a parry — flung wide, nearly straight.
@@ -408,7 +408,7 @@ export function legDirections(pose: LegPose): { thigh: V3; shin: V3 } {
 // on the opponent's hip; open guard widens the frame.
 const LEG_DIR_LOCKED = Object.freeze({
   thigh: [0.31, -0.76, 0.56] as V3,
-  shin: [-0.84, -0.53, -0.16] as V3,
+  shin: [-0.78, -0.62, -0.10] as V3,
 });
 const LEG_DIR_UNLOCKED = Object.freeze({
   thigh: [0.52, -0.69, 0.49] as V3,
@@ -635,20 +635,20 @@ export function computeBottomPose(input: BottomPoseInput): BodyPose {
   return {
     pelvisX: input.hipLateral * 0.20 + sway * 0.012,
     pelvisY:
-      0.26 + (legsLocked ? 0.05 : 0) + Math.abs(input.hipPush) * 0.03 + coil * 0.04 +
+      0.26 + (legsLocked ? 0.10 : 0) + Math.abs(input.hipPush) * 0.03 + coil * 0.04 +
       (entry.pelvisY ?? 0),
-    pelvisZ: input.hipPush * 0.30 + sway2 * 0.008,
+    pelvisZ: input.hipPush * 0.42 + sway2 * 0.008,
     // Supine: −π/2 lays the body flat with the chest facing up and (after
     // the rig's yaw flip) the head toward the camera; the small addition
     // keeps the shoulders just off the mat.
     pelvisPitch: -Math.PI / 2 + 0.15,
     pelvisYaw: input.hipAngle + (entry.pelvisYaw ?? 0) + shuffleYaw,
-    pelvisRoll: input.hipLateral * 0.25 + (entry.pelvisRoll ?? 0) + shuffleRoll,
+    pelvisRoll: input.hipLateral * 0.45 + (entry.pelvisRoll ?? 0) + shuffleRoll,
     // Positive pitch curls the chest up toward the opponent (supine front
     // = world up); fatigue sags it back toward the mat.
     torsoPitch: 0.20 + sitUp * 0.7 + coil * 0.10 + breath * 0.04 - fatigue * 0.15 + (entry.torsoPitch ?? 0),
     torsoYaw: input.hipAngle * 0.35 + sway2 * 0.02 + reachTwist,
-    torsoRoll: input.hipLateral * 0.18 + sway * 0.015 + (entry.torsoRoll ?? 0),
+    torsoRoll: input.hipLateral * 0.28 + sway * 0.015 + (entry.torsoRoll ?? 0),
     torsoTremor: 0,
     headPitch: 0.45 + sitUp * 0.4 - fatigue * 0.35 + breath * 0.02,
     headYaw: input.hipAngle * 0.3 + headScan,
@@ -746,7 +746,7 @@ export function computeTopPose(input: TopPoseInput): BodyPose {
     hipPitch: -0.55 + input.weightForward * 0.15,
     hipYaw: 0,
     hipRoll: 0.30,
-    kneeBend: 2.00,
+    kneeBend: 1.65,
   };
 
   // Pass attempt: drive in low — lead knee steps up (knee-slice shape),

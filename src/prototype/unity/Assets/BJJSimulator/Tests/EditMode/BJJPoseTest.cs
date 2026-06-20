@@ -439,5 +439,54 @@ namespace BJJSimulator.Tests
             Assert.That(strained, Is.LessThan(relaxed));
             Assert.That(strained, Is.GreaterThan(0f));
         }
+
+        // --- Effort / fatigue micro-dynamics (Tier 10) ------------------------
+
+        [Test]
+        public void MicroTremors_ActivatesAboveGripThreshold()
+        {
+            // Below the 0.3 grip gate the extremities are perfectly still…
+            Assert.That(BJJPoseRig.EffortMicroTremor(0.8f, 0.2f), Is.EqualTo(0f));
+            // …above it a non-zero shudder appears whose peak scales with grip and
+            // never exceeds the 4 mm cap.
+            float peakLow = 0f, peakHigh = 0f;
+            for (int i = 0; i < 400; i++)
+            {
+                float ph = i * 0.05f;
+                peakLow  = Mathf.Max(peakLow,  Mathf.Abs(BJJPoseRig.EffortMicroTremor(ph, 0.6f)));
+                peakHigh = Mathf.Max(peakHigh, Mathf.Abs(BJJPoseRig.EffortMicroTremor(ph, 1.0f)));
+            }
+            Assert.That(peakLow, Is.GreaterThan(0f));
+            Assert.That(peakHigh, Is.GreaterThan(peakLow));               // harder grip → bigger tremor
+            Assert.That(peakHigh, Is.LessThanOrEqualTo(0.004f + 1e-6f));  // capped at 4 mm
+        }
+
+        [Test]
+        public void HipEscape_TriggersOnWindowChange()
+        {
+            // A technique change kicks the escape amplitude high…
+            float amt = BJJPoseRig.HipEscapeTrigger(true, 0f);
+            Assert.That(amt, Is.GreaterThan(0.5f));
+            // …no change leaves it untouched…
+            Assert.That(BJJPoseRig.HipEscapeTrigger(false, amt), Is.EqualTo(amt));
+            // …the sway tracks the amplitude…
+            Assert.That(BJJPoseRig.HipEscapeSway(Mathf.PI * 0.5f, amt), Is.GreaterThan(0f));
+            // …and it decays to rest within ~0.6 s.
+            for (int i = 0; i < 60; i++) amt = BJJPoseRig.HipEscapeDecay(amt, 1f / 60f);
+            Assert.That(amt, Is.EqualTo(0f));
+        }
+
+        [Test]
+        public void SubmissionTension_StiffensAtHighGrip()
+        {
+            // A firm (>0.8) grip ramps the spring-frequency scale up toward 1.4×…
+            float scale = 1f;
+            for (int i = 0; i < 10; i++) scale = BJJPoseRig.StepSubmissionStiffness(scale, 0.9f, 0.1f);
+            Assert.That(scale, Is.GreaterThan(1.2f));
+            Assert.That(scale, Is.EqualTo(1.4f).Within(1e-3f));
+            // …and relaxes back to 1× once the grip eases.
+            for (int i = 0; i < 20; i++) scale = BJJPoseRig.StepSubmissionStiffness(scale, 0.2f, 0.1f);
+            Assert.That(scale, Is.EqualTo(1f).Within(1e-3f));
+        }
     }
 }

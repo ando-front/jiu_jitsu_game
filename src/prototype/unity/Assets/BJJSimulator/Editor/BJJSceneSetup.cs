@@ -134,10 +134,12 @@ namespace BJJSimulator.EditorTools
             var camGo = new GameObject("Main Camera");
             SceneManager.MoveGameObjectToScene(camGo, scene);
             camGo.tag = "MainCamera";
-            // Guard-side framing (mirrors blockman.ts): supine player in the
-            // foreground at the origin, kneeling opponent behind at z ≈ −0.5.
-            camGo.transform.position = new Vector3(0f, 1.25f, 1.9f);
-            camGo.transform.LookAt(new Vector3(0f, 0.5f, -0.5f));
+            // Side-view framing: camera to the right (+X), slightly elevated,
+            // looking across at the grappling pair. Bottom player (supine, head
+            // toward +Z, body toward −Z) appears horizontal; Top player (kneeling
+            // at z≈−0.5) appears vertical above — classic BJJ guard side angle.
+            camGo.transform.position = new Vector3(1.8f, 0.9f, -0.2f);
+            camGo.transform.LookAt(new Vector3(0f, 0.35f, -0.25f));
             var cam = camGo.AddComponent<Camera>();
             camGo.AddComponent<AudioListener>();
 
