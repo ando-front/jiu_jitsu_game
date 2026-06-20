@@ -23,6 +23,34 @@
 //   - Head look-at: a face indicator aims at the opponent — top → opponent
 //     head, bottom → opponent hip — via BJJPose.GazeTo (blend 0.6, ±60°).
 //
+// Tier-8 realism layer (secondary motion + anticipation + spine + fingers):
+//   - Secondary motion: SecondaryLayer overlays an under-damped (8 Hz/ζ0.4)
+//     follow-through on the primary springs; heavy parts (pelvis/torso) lag
+//     more than light limbs (BJJPose.IntegrateSpring shared core).
+//   - Anticipation: a committed move (BottomActionSig/TopActionSig change)
+//     briefly under-damps the limbs (SpringSet.ExciteLimbs) and loads the
+//     pelvis/torso the opposite way (BJJPose.AnticipationOffset).
+//   - Spine S-curve: TorsoPitch is split into lumbar/thoracic/chest segments
+//     (BJJPose.SpineSCurve) so the back rounds (bottom) or extends (top).
+//   - Impact ripple: big sim events kick a body wave pelvis→torso→shoulders→
+//     hands at 50 ms steps (BJJPose.RippleFired → SecondaryLayer.Kick).
+//   - Fingers: 4×3 knuckles per hand curl shut with the grip (BJJPose.FingerCurl).
+//
+// Tier-9 realism layer (whole-body dynamics): COM weight-shift sway on a new
+//   technique, inertial yaw lag (the heavy stack turns late), and a breath-
+//   synced shoulder bob whose amplitude shrinks as the grip tightens.
+//
+// Tier-10 realism layer (effort / fatigue micro-dynamics, this file):
+//   - Effort micro-tremors: once the grip is firm (>0.3) the extremities
+//     (wrists + ankles) pick up a ~13.5 Hz beating shudder whose amplitude
+//     scales with grip, capped at 4 mm and applied asymmetrically L/R so it
+//     never reads as a clean global wobble (EffortMicroTremor).
+//   - Hip-escape oscillation: a position/technique change kicks the guard-
+//     bottom into a decaying 1.8 Hz lateral shrimp (HipEscapeTrigger/Decay/Sway).
+//   - Submission stiffening: a firm (>0.8) grip ramps every spring's frequency
+//     toward 1.4× (the body braces hard mid-finish), relaxing back once the
+//     grip eases (StepSubmissionStiffness → SpringSet.Step freqScale).
+//
 // The skeleton is built procedurally in Awake, so no Inspector wiring is
 // needed — the scene runs headless and BJJ → Setup Scene just adds the
 // component.
@@ -66,6 +94,12 @@ namespace BJJSimulator.Platform
         private float   _breathPhase;
         private float   _gripTension; // last body's grip strength (breath damping)
 
+        // Tier-10: effort micro-tremors, hip-escape sway, submission stiffening.
+        private float _tremorPhase;                       // ~13.5 Hz extremity shudder
+        private float _hipEscapeAmt, _hipEscapePhase;     // decaying lateral shrimp
+        private int   _hipEscapeSig = int.MinValue;       // last bottom window technique
+        private float _submissionStiffScale = 1f;         // spring-freq multiplier
+
         // Per-body transient animation state (anticipation windup + body wave).
         private sealed class Anim
         {
@@ -86,6 +120,12 @@ namespace BJJSimulator.Platform
         private const float BreathPhaseHz    = 0.5f;  // shoulder-breath oscillator
         private const float InertialYawBlend = 0.4f;  // fraction applied to root yaw
         private const float WeightShiftRange = 0.05f; // ±COM target on a switch (m)
+
+        // Tier-10 effort/fatigue dynamics tunings.
+        private const float TremorHz = 13.5f, TremorGripGate = 0.3f, TremorAmpScale = 0.004f;
+        private const float HipEscapeHz = 1.8f, HipEscapeDecayRate = 1.5f, HipEscapeRange = 0.025f;
+        private const float HipEscapeKick = 0.8f;
+        private const float SubmissionStiffMax = 1.4f, SubmissionGripGate = 0.8f, SubmissionStiffRate = 3f;
 
         void Awake()
         {
@@ -145,6 +185,9 @@ namespace BJJSimulator.Platform
             _weightShiftSig = int.MinValue;
             _inertialYaw = _inertialYawVel = 0f;
             _breathPhase = 0f; _gripTension = 0f;
+            _tremorPhase = 0f;
+            _hipEscapeAmt = _hipEscapePhase = 0f; _hipEscapeSig = int.MinValue;
+            _submissionStiffScale = 1f;
             RenderFrame(g, intent, defense, nowMs, 0f);
         }
 
@@ -163,6 +206,16 @@ namespace BJJSimulator.Platform
             // Advance the breath oscillator used for the shoulder rise/fall, and
             // wrap it so the phase never grows unbounded across a long match.
             _breathPhase = Mathf.Repeat(_breathPhase + dt * 2f * Mathf.PI * BreathPhaseHz, 2f * Mathf.PI);
+
+            // Tier-10 effort dynamics. The tremor phase runs continuously; the
+            // submission stiffening tracks the firmest grip in the scene; the
+            // hip-escape re-triggers when the guard-bottom's technique changes.
+            _tremorPhase = Mathf.Repeat(_tremorPhase + dt * 2f * Mathf.PI * TremorHz, 2f * Mathf.PI);
+            float frameGrip = Mathf.Clamp01(Mathf.Max(
+                Mathf.Max(scene.Bottom.ArmL.Grip, scene.Bottom.ArmR.Grip),
+                Mathf.Max(scene.Top.ArmL.Grip,    scene.Top.ArmR.Grip)));
+            _submissionStiffScale = StepSubmissionStiffness(_submissionStiffScale, frameGrip, dt);
+            UpdateHipEscape(g, dt);
 
             float fatigueB = Mathf.Clamp01(1f - g.Bottom.Stamina);
             float fatigueT = Mathf.Clamp01(1f - g.Top.Stamina);
@@ -188,6 +241,11 @@ namespace BJJSimulator.Platform
             // Weight shift: translate the guard-bottom body by the swaying COM
             // offset (its pelvis-rooted FK chain moves with it).
             if (_weightShiftPos != Vector3.zero) Shift(ref bp, _weightShiftPos);
+
+            // Tier-10 hip escape: after a position/technique change the guard-
+            // bottom shrimps its hips side to side (decaying lateral sway).
+            if (_hipEscapeAmt > 0.001f)
+                Shift(ref bp, new Vector3(HipEscapeSway(_hipEscapePhase, _hipEscapeAmt), 0f, 0f));
 
             // Inertial yaw: the whole rig root turns late, lagging the command.
             transform.localRotation = Quaternion.Euler(0f, Mathf.Rad2Deg * _inertialYaw * InertialYawBlend, 0f);
@@ -294,6 +352,66 @@ namespace BJJSimulator.Platform
         }
 
         // ─────────────────────────────────────────────────────────────────────
+        // Effort / fatigue micro-dynamics (Tier 10) — pure, unit-testable
+        // ─────────────────────────────────────────────────────────────────────
+
+        // A fine grip/fatigue shudder for the extremities. Silent below the grip
+        // gate; above it the amplitude scales with grip (capped at 4 mm). The
+        // sin·sin(×1.37) product gives an organic beating envelope, not a pure
+        // sine, so the tremor never looks metronomic.
+        public static float EffortMicroTremor(float phase, float gripTension)
+        {
+            if (gripTension < TremorGripGate) return 0f;
+            float amp = Mathf.Clamp01(gripTension) * TremorAmpScale;
+            return Mathf.Sin(phase) * Mathf.Sin(phase * 1.37f) * amp;
+        }
+
+        // Hip-escape (shrimp) sway. A technique change kicks the amplitude high;
+        // it decays exponentially while the sway tracks it at HipEscapeHz.
+        public static float HipEscapeTrigger(bool techniqueChanged, float currentAmt)
+            => techniqueChanged ? Mathf.Max(currentAmt, HipEscapeKick) : currentAmt;
+
+        public static float HipEscapeDecay(float amt, float dt)
+            => Mathf.Max(0f, amt - dt * HipEscapeDecayRate);
+
+        public static float HipEscapeSway(float phase, float amt)
+            => Mathf.Sin(phase) * amt * HipEscapeRange;
+
+        // Submission stiffening: a firm (>gate) grip ramps the spring-frequency
+        // scale toward 1.4× (the body braces hard mid-finish); it relaxes back to
+        // 1× once the grip eases. MoveTowards gives a steady, frame-rate-fair ramp.
+        public static float StepSubmissionStiffness(float scale, float gripTension, float dt)
+        {
+            float target = gripTension > SubmissionGripGate ? SubmissionStiffMax : 1f;
+            return Mathf.MoveTowards(scale, target, dt * SubmissionStiffRate);
+        }
+
+        // Re-trigger + advance the guard-bottom's hip-escape on a technique change.
+        private void UpdateHipEscape(GameState g, float dt)
+        {
+            int sig = HipEscapeSig(g);
+            if (_hipEscapeSig == int.MinValue) _hipEscapeSig = sig;          // first frame: arm, don't fire
+            else if (sig != _hipEscapeSig)
+            {
+                _hipEscapeSig = sig;
+                _hipEscapeAmt = HipEscapeTrigger(true, _hipEscapeAmt);
+            }
+            _hipEscapeAmt = HipEscapeDecay(_hipEscapeAmt, dt);
+            if (_hipEscapeAmt > 0.001f)
+                _hipEscapePhase = Mathf.Repeat(_hipEscapePhase + dt * 2f * Mathf.PI * HipEscapeHz, 2f * Mathf.PI);
+        }
+
+        // Signature of the guard-bottom's active window technique (0 = none).
+        private static int HipEscapeSig(GameState g)
+        {
+            var jw = g.JudgmentWindow;
+            bool open = jw.State == JudgmentWindowState.Open || jw.State == JudgmentWindowState.Opening;
+            if (open && jw.Candidates != null && jw.Candidates.Length > 0)
+                return (int)jw.Candidates[0] + 1;
+            return 0;
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
         // Input assembly — CurrentGameState (+ last intent) → pose inputs
         // ─────────────────────────────────────────────────────────────────────
 
@@ -376,7 +494,9 @@ namespace BJJSimulator.Platform
             if (anim.AnticipStartMs >= 0f && nowMs - anim.AnticipStartMs < AnticipWindowMs)
                 sp.ExciteLimbs();
 
-            BodyPose p = sp.Step(target, dt);
+            // Submission stiffening scales every spring's frequency (a hard grip
+            // braces the whole body; 1× when relaxed).
+            BodyPose p = sp.Step(target, dt, _submissionStiffScale);
 
             // Secondary motion: a lighter, underdamped (8 Hz / ζ0.4) oscillator
             // chases the primary smoother. Heavy parts (pelvis, torso) blend in
@@ -451,6 +571,19 @@ namespace BJJSimulator.Platform
                   out rp.ShoulderR, out rp.ElbowR, out rp.HandR, out rp.HandRotR);
             LegFK(p.LegL, -1f, pelvisPos, pelvisRot, out rp.HipL, out rp.KneeL, out rp.AnkleL, out rp.ToeL);
             LegFK(p.LegR,  1f, pelvisPos, pelvisRot, out rp.HipR, out rp.KneeR, out rp.AnkleR, out rp.ToeR);
+
+            // Tier-10 effort micro-tremors: once this body's grip is firm, a fine
+            // ~13.5 Hz shudder rides the extremities (wrists + ankles), applied
+            // asymmetrically L/R so it never reads as a clean global wobble.
+            float tremor = EffortMicroTremor(_tremorPhase, _gripTension);
+            if (tremor != 0f)
+            {
+                Vector3 tv = new Vector3(tremor * 0.7f, tremor * 0.3f, tremor * 0.5f);
+                rp.HandL  += tv;
+                rp.HandR  += tv * -1.1f;
+                rp.AnkleL += tv * 0.5f;
+                rp.AnkleR += tv * -0.5f;
+            }
             return rp;
         }
 
@@ -853,7 +986,11 @@ namespace BJJSimulator.Platform
         // consumed (and cleared) by the next Step.
         public void ExciteLimbs() => _excite = true;
 
-        public BodyPose Step(BodyPose t, float dt)
+        public BodyPose Step(BodyPose t, float dt) => Step(t, dt, 1f);
+
+        // freqScale (Tier 10) multiplies every channel's frequency — a firm grip
+        // braces the whole body by stiffening all springs (>1 = snappier).
+        public BodyPose Step(BodyPose t, float dt, float freqScale)
         {
             float[] tgt = Flatten(t);
             if (!_init)
@@ -869,7 +1006,7 @@ namespace BJJSimulator.Platform
                     // drop to 0.6× zeta for a visible overshoot; the spine and
                     // pelvis keep their stable tuning.
                     float zeta = (_excite && i >= LSp) ? Zeta[i] * 0.6f : Zeta[i];
-                    StepSpring(i, tgt[i], dt, Freq[i], zeta);
+                    StepSpring(i, tgt[i], dt, Freq[i] * freqScale, zeta);
                 }
             }
             _excite = false;
