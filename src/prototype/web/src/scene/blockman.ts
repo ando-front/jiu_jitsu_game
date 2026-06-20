@@ -314,13 +314,18 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
 // Limb meshes hang along local −y from their joint group, so joint group
 // rotations articulate them like bones.
 
+// A limb segment capsule, centred on the bone it represents. `length` is the
+// capsule's cylinder span (axis-aligned, excluding the hemispherical caps);
+// `boneLength` is the joint→joint distance used to centre the mesh at the
+// bone midpoint, so the rounded caps overlap each joint naturally.
 function limbCapsule(
   radius: number,
   length: number,
+  boneLength: number,
   material: THREE.Material,
 ): THREE.Mesh {
-  const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(radius, length, 4, 10), material);
-  mesh.position.y = -(length / 2 + radius);
+  const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(radius, length, 6, 12), material);
+  mesh.position.y = -boneLength / 2;
   return mesh;
 }
 
@@ -364,7 +369,8 @@ export function buildBlockman(role: "top" | "bottom", mirrorXZ: boolean): Blockm
     color: new THREE.Color(GI_BELT),
     roughness: 0.6,
   });
-  const pelvisMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.13, 0.10, 4, 10), beltMat);
+  // Belt: a flattened horizontal capsule wrapping the pelvis joint (gold).
+  const pelvisMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.12, 0.12, 6, 12), beltMat);
   pelvisMesh.rotation.z = Math.PI / 2;
   pelvis.add(pelvisMesh);
 
@@ -372,18 +378,33 @@ export function buildBlockman(role: "top" | "bottom", mirrorXZ: boolean): Blockm
   torsoGroup.position.set(0, RIG_DIMS.pelvisToTorso, 0);
   pelvis.add(torsoGroup);
 
-  const torsoMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.17, 0.30, 4, 12), material);
-  torsoMesh.position.y = 0.26;
-  torsoGroup.add(torsoMesh);
-
-  const headGroup = new THREE.Group();
-  headGroup.position.set(0, RIG_DIMS.headY, 0);
-  torsoGroup.add(headGroup);
+  // Skin material (head + neck — bare flesh above the gi collar).
   const headMat = new THREE.MeshStandardMaterial({
     color: new THREE.Color(GI_SKIN),
     roughness: 0.55,
   });
-  const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.125, 16, 12), headMat);
+
+  // Two-segment torso: a narrower abdomen (lower) tapering up into a broad
+  // chest (upper) for shoulder breadth. Both wear the jacket material so the
+  // break-tint reads across the whole torso. The chest is the `body` ref and
+  // the breathing-scale target.
+  const lowerTorsoMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.12, 0.16, 6, 12), material);
+  lowerTorsoMesh.position.y = 0.06;
+  torsoGroup.add(lowerTorsoMesh);
+
+  const torsoMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.14, 0.28, 6, 14), material);
+  torsoMesh.position.y = 0.30;
+  torsoGroup.add(torsoMesh);
+
+  // Neck: a short cylinder bridging chest top and head (skin).
+  const neckMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.10, 12), headMat);
+  neckMesh.position.y = 0.50;
+  torsoGroup.add(neckMesh);
+
+  const headGroup = new THREE.Group();
+  headGroup.position.set(0, RIG_DIMS.headY, 0);
+  torsoGroup.add(headGroup);
+  const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.11, 16, 12), headMat);
   headMesh.position.y = RIG_DIMS.headCenterY;
   headGroup.add(headMesh);
 
@@ -403,13 +424,13 @@ export function buildBlockman(role: "top" | "bottom", mirrorXZ: boolean): Blockm
     // plane, pitch raises the arm within it).
     shoulder.rotation.order = "YXZ";
     torsoGroup.add(shoulder);
-    shoulder.add(limbCapsule(0.055, 0.17, mat));
+    shoulder.add(limbCapsule(0.045, 0.26, RIG_DIMS.upperArm, mat));
     const elbow = new THREE.Group();
     elbow.position.set(0, -RIG_DIMS.upperArm, 0);
     shoulder.add(elbow);
-    elbow.add(limbCapsule(0.05, 0.15, mat));
+    elbow.add(limbCapsule(0.038, 0.24, RIG_DIMS.foreArm, mat));
     // The hand sphere is squashed/splayed by grip in applyArm.
-    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), mat);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), mat);
     hand.position.y = -RIG_DIMS.foreArm;
     elbow.add(hand);
     return { shoulder, elbow, hand };
@@ -423,17 +444,17 @@ export function buildBlockman(role: "top" | "bottom", mirrorXZ: boolean): Blockm
     // thigh within it — matches pose.ts's solveLeg decomposition.
     hip.rotation.order = "YXZ";
     pelvis.add(hip);
-    hip.add(limbCapsule(0.08, 0.22, mat));
+    hip.add(limbCapsule(0.065, 0.38, RIG_DIMS.thigh, mat));
     const knee = new THREE.Group();
     knee.position.set(0, -RIG_DIMS.thigh, 0);
     hip.add(knee);
-    knee.add(limbCapsule(0.065, 0.21, mat));
+    knee.add(limbCapsule(0.048, 0.35, RIG_DIMS.shin, mat));
     // Foot hangs off an ankle pivot so it can plantar/dorsiflex.
     const ankle = new THREE.Group();
-    ankle.position.set(0, -0.36, 0);
+    ankle.position.set(0, -RIG_DIMS.shin, 0);
     knee.add(ankle);
-    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.06, 0.18), mat);
-    foot.position.set(0, 0, 0.05);
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.05, 0.20), mat);
+    foot.position.set(0, 0, 0.06);
     ankle.add(foot);
     return { hip, knee, ankle };
   }
