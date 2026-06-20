@@ -396,5 +396,48 @@ namespace BJJSimulator.Tests
             Assert.IsFalse(BJJPose.RippleFired(-2f, -1f, 0, 50f));
             Assert.IsFalse(BJJPose.RippleFired(-2f, -1f, 1, 50f));
         }
+
+        // --- Whole-body dynamics (Tier 9) -------------------------------------
+
+        [Test]
+        public void WeightShift_DampedSpring_ConvergesToZero()
+        {
+            // A COM offset released toward zero settles back to centre with no
+            // residual velocity (ζ0.7 — slight overshoot, then quiet).
+            Vector3 pos = new Vector3(0.05f, 0f, -0.04f);
+            Vector3 vel = Vector3.zero;
+            for (int i = 0; i < 600; i++) // 10 s @ 60 fps
+                BJJPoseRig.StepWeightShift(ref pos, ref vel, Vector3.zero, 1f / 60f);
+            Assert.That(pos.magnitude, Is.LessThan(1e-3f));
+            Assert.That(vel.magnitude, Is.LessThan(1e-3f));
+        }
+
+        [Test]
+        public void InertialYaw_FollowsTarget_WithLag()
+        {
+            // After one frame the yaw has begun turning but lags well behind the
+            // commanded angle (heavy body, late turn); it converges given time.
+            float yaw = 0f, vel = 0f;
+            const float target = 0.5f;
+            BJJPoseRig.StepInertialYaw(ref yaw, ref vel, target, 1f / 60f);
+            Assert.That(yaw, Is.GreaterThan(0f));
+            Assert.That(yaw, Is.LessThan(target));
+            for (int i = 0; i < 600; i++)
+                BJJPoseRig.StepInertialYaw(ref yaw, ref vel, target, 1f / 60f);
+            Assert.That(yaw, Is.EqualTo(target).Within(1e-2f));
+        }
+
+        [Test]
+        public void ShoulderBreath_AmplitudeReducedByTension()
+        {
+            // Peak inhale (sin = 1 at π/2): full ±8 mm relaxed, halved at a full
+            // grip (× (1 − 0.5)). Tension never flips the sign.
+            float relaxed  = BJJPoseRig.ShoulderBreathOffset(Mathf.PI * 0.5f, 0f);
+            float strained = BJJPoseRig.ShoulderBreathOffset(Mathf.PI * 0.5f, 1f);
+            Assert.That(relaxed, Is.EqualTo(0.008f).Within(1e-6f));
+            Assert.That(strained, Is.EqualTo(0.004f).Within(1e-6f));
+            Assert.That(strained, Is.LessThan(relaxed));
+            Assert.That(strained, Is.GreaterThan(0f));
+        }
     }
 }
